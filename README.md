@@ -299,9 +299,93 @@ yarn add --dev @arco-design/web-vue
 
 ### 后端
 
+#### 快速上手
 
+**1、使用后端万用模板**
 
+**2、修改项目名**
 
+![image-20231108133027015](assets/image-20231108133027015.png)
+
+![image-20231108133113995](assets/image-20231108133113995.png)
+
+**3、修改端口号**
+
+![image-20231108133456961](assets/image-20231108133456961.png)
+
+**4、开启分布式Session**
+
+![image-20231108133537385](assets/image-20231108133537385.png)
+
+![image-20231108133604509](assets/image-20231108133604509.png)
+
+![image-20231108133628962](assets/image-20231108133628962.png)
+
+**5、修改数据库并创建**
+
+![image-20231108134324803](assets/image-20231108134324803.png)
+
+**6、启动项目，查看接口文档**
+
+![image-20231108134641172](assets/image-20231108134641172.png)
+
+#### 模板结构介绍
+
+- doc：存放文档
+- sql
+  - create_table.sql：初始的建库和建表语句
+  - post_es_mapping.json：帖子表在ES中的索引创建语句
+- src
+  - main
+    - java
+      - com
+        - luoying
+          - annotation
+            - AuthCheck：权限校验注解，用于权限校验
+          - aop
+            - AuthInterceptor：权限校验切面，匹配所有使用了AuthCheck注解的方法，然后进行权限校验
+            - LogInterceptor：记录请求和响应日志切面，匹配controller包的所有方法
+          - common
+            - BaseResponse：通用结果返回类
+            - DeleteRequest：通用的删除请求类
+            - ErrorCode：各种错误码
+            - PageRequest：通用的分页请求类
+            - ResultUtils：定义了构建通用返回结果的方法
+          - config
+            - CorsConfig：全局跨域配置
+            - CosClientConfig：定义了对象存储的配置
+            - JsonConfig：添加 Long 转 json 精度丢失的配置
+            - Knife4jConfig：接口文档生成的配置
+            - MyBatisPlusConfig：MybatisPlus分页拦截器
+            - WxOpenConfig：微信开放平台的配置
+          - constant：定义常量
+            - CommonConstant：排序方式常量
+            - FileConstant：COS 访问地址
+            - UserConstant：用户角色常量
+          - controller：接受请求
+          - esdao：类似mybatis的mapper，用于操作ES
+          - exception：异常处理相关
+          - job：任务（定时任务，单次任务）
+            - cycle：循环执行
+            - once：单次任务
+          - manager：定义通用的服务
+          - mapper：mybatis的数据访问层，用于操作数据库
+          - model
+            - dto：请求包装类
+            - entity：数据库表的实体类
+            - enums：枚举
+            - vo：响应包装类
+          - service：服务层，用于编写业务逻辑
+          - utils：工具类，各种公用的方法
+          - wxmp：公众号相关
+        - MainApplication：主类（项目入口）
+    - resources：配置文件
+      - mapper：映射文件
+      - *.yml：项目配置文件
+      - banner.txt：替换SpringBoot logo
+      - test_excel.xlsx：excel测试文件
+  - test：单元测试代码
+  - DockerFile：用于构建docker镜像
 
 ## 后端
 
@@ -331,9 +415,9 @@ yarn add --dev @arco-design/web-vue
 
 ![image-20231107142537525](assets/image-20231107142537525.png)
 
-![image-20231107150538114](assets/image-20231107150538114.png)
+![image-20231108093104479](assets/image-20231108093104479.png)
 
-![image-20231107150853194](assets/image-20231107150853194.png)
+**![image-20231108094509741](assets/image-20231108094509741.png)**
 
 ![image-20231107151052816](assets/image-20231107151052816.png)
 
@@ -343,7 +427,7 @@ yarn add --dev @arco-design/web-vue
 
 ![image-20231107144341788](assets/image-20231107144341788.png)
 
- ![image-20231107160816310](assets/image-20231107160816310.png)
+![image-20231107160816310](assets/image-20231107160816310.png)
 
 ![image-20231107161752595](assets/image-20231107161752595.png)
 
@@ -353,11 +437,11 @@ yarn add --dev @arco-design/web-vue
 
 ![image-20231107162325273](assets/image-20231107162325273.png)
 
-5、菜单栏自适应
+**5、菜单栏自适应**
 
 ![image-20231107173225420](assets/image-20231107173225420.png)
 
-![image-20231107173532494](assets/image-20231107173532494.png)
+![image-20231108094008126](assets/image-20231108094008126.png)
 
 ![image-20231107173550596](assets/image-20231107173550596.png)
 
@@ -390,27 +474,265 @@ https://vuex.vuejs.org/zh/guide
 
 ![image-20231107173025090](assets/image-20231107173025090.png)
 
+#### 显隐菜单
+
+**1、routes.ts 给路由新增一个标志位，用于判断路由是否隐藏**
+
+![image-20231108095843211](assets/image-20231108095843211.png)
+
+**2、不要同时用 v-for 和 v-if 渲染元素，因为v-for会先循环所有的元素，然后才轮到v-if去判断，如果1000个菜单中，只有1个需要展示，就会性能浪费**
+
+建议：先过滤出需要展示的元素，得到数组
+
+![image-20231108100827376](assets/image-20231108100827376.png)
+
+![image-20231108101044128](assets/image-20231108101044128.png)
+
 #### 全局权限管理
 
 以一套通用的机制定义哪个页面需要哪些权限 
 
-**1、在路由配置文件，定义某个路由的访问权限**
+**1、定义权限**
 
-![image-20231107192328717](assets/image-20231107192328717.png)
+![image-20231108114154984](assets/image-20231108114154984.png)
 
-2、在全局页面组件App.vue中，绑定一个全局路由监听，每次访问页面时，根据用户要访问页面的路由信息，判断用户是否有权限访问。有权限就跳转到原页面，没有就拦截或者跳转到401鉴权或登录页
+**2、定义通用的权限校验方法** 
 
-![image-20231107193511039](assets/image-20231107193511039.png)
+创建checkAccess.ts文件，定义检测权限的函数
 
-![image-20231107193619283](assets/image-20231107193619283.png)
+```ts
+import AccessEnum from "@/access/AccessEnum";
 
-![image-20231107193701762](assets/image-20231107193701762.png)
+/**
+ * 判断当前登录用户是否具有某个页面所需的权限
+ * @param loginUser 当前登录用户
+ * @param requireAccess 目标页面需要的权限
+ * @return boolean 有无权限
+ */
+const checkAccess = (loginUser: any, requireAccess = AccessEnum.NOT_LOGIN) => {
+  //获取当前登录用户的权限，如果没有loginUser，则表示未登录
+  const loginUserAccess = loginUser?.userRole ?? AccessEnum.NOT_LOGIN;
+  // 用户未登录也能访问
+  if (requireAccess === AccessEnum.NOT_LOGIN) {
+    return true;
+  }
+  // 用户需要登录才能访问
+  if (requireAccess === AccessEnum.USER) {
+    if (loginUserAccess !== AccessEnum.NOT_LOGIN) {
+      return true;
+    }
+  }
+  // 管理员才能访问
+  if (requireAccess === AccessEnum.ADMIN) {
+    if (loginUserAccess === AccessEnum.ADMIN) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export default checkAccess;
+```
+
+![image-20231108114128890](assets/image-20231108114128890.png)
+
+**3、在路由配置文件，定义某个路由的访问权限**
+
+![image-20231108125226389](assets/image-20231108125226389.png)
+
+**4、根据权限过滤菜单**
+
+![image-20231108130545279](assets/image-20231108130545279.png)
+
+![image-20231108130736968](assets/image-20231108130736968.png)
+
+![image-20231108130813130](assets/image-20231108130813130.png)
 
 ![image-20231107193804393](assets/image-20231107193804393.png)
 
 ![image-20231107193818874](assets/image-20231107193818874.png)
 
 ![image-20231107193831005](assets/image-20231107193831005.png)
+
+**5、路由拦截，权限鉴定**
+
+![image-20231108132246363](assets/image-20231108132246363.png)
+
+#### 全局项目入口
+
+app.vue中预留一个可以编写全局初始化逻辑的代码
+
+![image-20231108132500863](assets/image-20231108132500863.png)
+
+#### 前后端联调
+
+##### 引入Axios
+
+https://www.axios-http.cn/docs/intro
+
+```
+npm install axios
+```
+
+##### 后端接口调用代码自动生成
+
+https://github.com/ferdikoomen/openapi-typescript-codegen
+
+```sh
+npm install openapi-typescript-codegen --save-dev
+```
+
+```sh
+openapi --input "http://localhost:8085/api/v2/api-docs" --output ./generated --client axios
+```
+
+##### 调用service中的代码
+
+![image-20231108195954484](assets/image-20231108195954484.png)
+
+##### 自定义请求参数
+
+`1、使用代码生成器提供的全局参数修改对象`
+
+https://github.com/ferdikoomen/openapi-typescript-codegen/blob/master/docs/openapi-object.md
+
+![image-20231108200252846](assets/image-20231108200252846.png)
+
+![image-20231108201713721](assets/image-20231108201713721.png)
+
+`2、直接定义axios库的全局请求参数，比如拦截器`
+
+https://www.axios-http.cn/docs/interceptors
+
+![image-20231108201619700](assets/image-20231108201619700.png)
+
+![image-20231108201639173](assets/image-20231108201639173.png)
+
+#### 登录
+
+##### 自动登录
+
+`1、编写远程获取登录用户的代码`
+
+![image-20231108202156911](assets/image-20231108202156911.png)
+
+`2、在一个全局位置去触发getLoginUser`
+
+- 路由拦截 router.beforeEach
+- 全局页面入口 App.vue
+- 全局通用布局
+- 全局权限管理（**采用**）
+
+创建index.ts文件，把App.vue中原有的路由拦截，权限校验逻辑放在该文件（**这一部分也包含了权限管理**）
+
+优势：只要不引入，就不会开启，不会对项目有影响
+
+```ts
+import store from "@/store";
+import AccessEnum from "@/access/AccessEnum";
+import router from "@/router";
+import checkAccess from "@/access/CheckAccess";
+
+router.beforeEach(async (to, from, next) => {
+  let loginUser = store.state.user.loginUser;
+  // 如果之前登录过，自动登录
+  if (!loginUser || !loginUser.userRole) {
+    await store.dispatch("user/getLoginUser");
+    loginUser = store.state.user.loginUser;
+  }
+  const requireAccess = to.meta.access ?? AccessEnum.NOT_LOGIN;
+  //目标页面需要登录
+  if (requireAccess !== AccessEnum.NOT_LOGIN) {
+    // 如果没登录，跳转到登录页面
+    if (
+      !loginUser ||
+      !loginUser.userRole ||
+      loginUser.userRole === AccessEnum.NOT_LOGIN
+    ) {
+      next(`/user/login?redirect=${to.fullPath}`);
+      return;
+    }
+    // 如果登录了，但没有权限，跳转无权限页面
+    if (!checkAccess(loginUser, requireAccess as string)) {
+      next("/noAuth");
+      return;
+    }
+  }
+  //放行，不需要登录或者有权限
+  next();
+});
+
+```
+
+![image-20231108213648923](assets/image-20231108213648923.png)
+
+![image-20231108205828243](assets/image-20231108205828243.png)
+
+##### 用户布局
+
+`1、定义路由`
+
+使用Vue-Router自带的子路由机制，实现页面嵌套
+
+![image-20231109105833246](assets/image-20231109105833246.png)
+
+`2、新建UserLayout，UserLoginView，UserRegisterView页面，并在routes中引入`
+
+![image-20231109095155117](assets/image-20231109095155117.png)
+
+![image-20231109095436990](assets/image-20231109095436990.png)
+
+![image-20231109095505513](assets/image-20231109095505513.png)
+
+`3、在App.vue根页面中根据路由区分多套布局`
+
+这种在App.vue中通过 if-else区分布局的方式，不是最优雅的。理想情况下是在routes.ts文件中定义多套布局，然后直接读取使用，
+
+![image-20231109100118529](assets/image-20231109100118529.png)
+
+##### 登录页面开发
+
+`1、选择组件`
+
+![image-20231109101129765](assets/image-20231109101129765.png)
+
+`2、修改用户布局`
+
+![image-20231109113457564](assets/image-20231109113457564.png)
+
+![image-20231109113743177](assets/image-20231109113743177.png)
+
+![image-20231109113811561](assets/image-20231109113811561.png)
+
+`3、完成登录页面`
+
+![image-20231109114324614](assets/image-20231109114324614.png)
+
+![image-20231109114416068](assets/image-20231109114416068.png)
+
+![image-20231109114651821](assets/image-20231109114651821.png)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## 扩展思路
 

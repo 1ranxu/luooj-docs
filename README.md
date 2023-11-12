@@ -126,7 +126,7 @@ OJ （Online Judge 在线判题系统）
 **后端**
 
 - 库表设计
-- 后端接口代码开发
+- 后端增删改查接口开发
 - 代码沙箱
 - 系统优化
   - 微服务改造
@@ -135,7 +135,25 @@ OJ （Online Judge 在线判题系统）
 
 - 通用项目模板搭建
 
-- 主业务流程
+- 题目模块
+  - 题目创建页（管理员）
+
+  - 题目管理页（管理员）
+    - 查看（搜索）
+
+    - 删除
+
+    - 修改
+
+    - 快捷创建
+
+  - 题目搜索页（用户&管理员可以查看到题目）
+
+  - 在线做题页（ 用户&管理员）
+
+  - 题目提交列表页（用户&管理员）
+- 判题模块
+
 
 ## OJ系统实现方案
 
@@ -557,7 +575,7 @@ create table if not exists question_submit
     userId     bigint                             not null comment '提交用户id',
     code       text                               not null comment '用户提交的代码',
     judgeInfo  varchar(128)                       null comment '判题信息',
-    status     int      default 0                 not null comment '判题状态（0-待判题、1-判题中、2-通过、3-失败）',
+    status     int      default 0                 not null comment '判题状态（0-待判题、1-判题中、2-成功、3-失败）',
     createTime datetime default CURRENT_TIMESTAMP not null comment '创建时间',
     updateTime datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
     isDelete   tinyint  default 0                 not null comment '是否删除',
@@ -1262,6 +1280,25 @@ public class QuestionController {
 
     /**
      * 根据 id 获取
+     *
+     * @param id
+     * @return
+     */
+    @GetMapping("/get")
+    @AuthCheck(mustRole = "admin")
+    public BaseResponse<Question> getQuestionById(long id, HttpServletRequest request) {
+        if (id <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        Question question = questionService.getById(id);
+        if (question == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        return ResultUtils.success(question);
+    }
+
+    /**
+     * 根据 id 获取封装
      *
      * @param id
      * @return
@@ -2184,9 +2221,13 @@ npm install axios
 
 https://github.com/ferdikoomen/openapi-typescript-codegen
 
+`1、安装`
+
 ```sh
 npm install openapi-typescript-codegen --save-dev
 ```
+
+`2、执行命令，生成代码`
 
 ```sh
 openapi --input "http://localhost:8085/api/v2/api-docs" --output ./generated --client axios
@@ -2350,21 +2391,1044 @@ router.beforeEach(async (to, from, next) => {
 
 
 
+### 接入组件
+
+> 先接入可能用到的组件，再去写页面，避免因为后续整合组件失败，依赖冲突带来的返工
+
+#### Markdown 编辑器
+
+> 一套通用的文本编辑语法，可以在用于统一网站上的文本样式，简单易学
+
+推荐：https://github.com/bytedance/bytemd
+
+**1、安装Vue3版本的**
+
+```sh
+npm i @bytemd/vue-next
+```
+
+![image-20231110160517761](assets/image-20231110160517761.png)
+
+![image-20231110160537436](assets/image-20231110160537436.png)
+
+**3、引入css样式**
+
+```ts
+import 'bytemd/dist/index.css'
+```
+
+![image-20231110160622764](assets/image-20231110160622764.png)
+
+![image-20231110160804698](assets/image-20231110160804698.png)
+
+**3、安装插件**
+
+```sh
+npm i @bytemd/plugin-highlight
+npm i @bytemd/plugin-gfm
+```
+
+![image-20231110161514738](assets/image-20231110161514738.png)
+
+**4、复制官网示例进行修改**
+
+![image-20231110162502837](assets/image-20231110162502837.png)
+
+![image-20231110163744613](assets/image-20231110163744613.png)
+
+**5、测试**
+
+![image-20231110163850340](assets/image-20231110163850340.png)
+
+![image-20231110163932665](assets/image-20231110163932665.png)
+
+**6、隐藏编辑器中需要的操作图标**
+
+**![image-20231110164530496](assets/image-20231110164530496.png)**
+
+![image-20231110164740626](assets/image-20231110164740626.png)
+
+![image-20231110164753746](assets/image-20231110164753746.png)
+
+**7、提高组件的通用性，方便父组件拿到数据**
+
+![image-20231110171026114](assets/image-20231110171026114.png)
+
+![image-20231110171204002](assets/image-20231110171204002.png)
+
+![image-20231110171628598](assets/image-20231110171628598.png)
+
+
+
+#### 代码编辑器
+
+微软的：https://github.com/microsoft/monaco-editor
+
+官方整合教程：https://github.com/microsoft/monaco-editor/blob/main/docs/integrate-esm.md
+
+整合教程：http://chart.zhenglinglu.cn/pages/2244bd/#开始安装
+
+**1、安装**
+
+```sh
+npm install monaco-editor
+```
+
+**2、vue-cli项目（webpack项目）整合monaco-editor** https://github.com/microsoft/monaco-editor/tree/main/webpack-plugin
+
+`安装`
+
+```sh
+#把代码编辑器和webpack整合在一起，便于打包，自动加载，按需加载
+npm install monaco-editor-webpack-plugin
+```
+
+`在vue.config.ts中配置插件`
+
+`全量加载`
+
+```ts
+const MonacoWebpackPlugin = require("monaco-editor-webpack-plugin");
+module.exports = defineConfig({
+  transpileDependencies: true,
+  chainWebpack(config) {
+    config.plugin("monaco").use(new MonacoWebpackPlugin());
+  },
+});
+```
+
+![image-20231110200101368](assets/image-20231110200101368.png)
+
+`按需加载：`
+
+```ts
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin')
+module.exports = {
+  chainWebpack: config => {
+    config.plugin('monaco-editor').use(MonacoWebpackPlugin, [
+      {
+        // Languages are loaded on demand at runtime
+        languages: ['json', 'go', 'css', 'html', 'java', 'javascript', 'less', 'markdown', 'mysql', 'php', 'python', 'scss', 'shell', 'redis', 'sql', 'typescript', 'xml'], // ['abap', 'apex', 'azcli', 'bat', 'cameligo', 'clojure', 'coffee', 'cpp', 'csharp', 'csp', 'css', 'dart', 'dockerfile', 'ecl', 'fsharp', 'go', 'graphql', 'handlebars', 'hcl', 'html', 'ini', 'java', 'javascript', 'json', 'julia', 'kotlin', 'less', 'lexon', 'lua', 'm3', 'markdown', 'mips', 'msdax', 'mysql', 'objective-c', 'pascal', 'pascaligo', 'perl', 'pgsql', 'php', 'postiats', 'powerquery', 'powershell', 'pug', 'python', 'r', 'razor', 'redis', 'redshift', 'restructuredtext', 'ruby', 'rust', 'sb', 'scala', 'scheme', 'scss', 'shell', 'solidity', 'sophia', 'sql', 'st', 'swift', 'systemverilog', 'tcl', 'twig', 'typescript', 'vb', 'xml', 'yaml'],
+
+        features: ['format', 'find', 'contextmenu', 'gotoError', 'gotoLine', 'gotoSymbol', 'hover' , 'documentSymbols'] //['accessibilityHelp', 'anchorSelect', 'bracketMatching', 'caretOperations', 'clipboard', 'codeAction', 'codelens', 'colorPicker', 'comment', 'contextmenu', 'coreCommands', 'cursorUndo', 'dnd', 'documentSymbols', 'find', 'folding', 'fontZoom', 'format', 'gotoError', 'gotoLine', 'gotoSymbol', 'hover', 'iPadShowKeyboard', 'inPlaceReplace', 'indentation', 'inlineHints', 'inspectTokens', 'linesOperations', 'linkedEditing', 'links', 'multicursor', 'parameterHints', 'quickCommand', 'quickHelp', 'quickOutline', 'referenceSearch', 'rename', 'smartSelect', 'snippets', 'suggest', 'toggleHighContrast', 'toggleTabFocusMode', 'transpose', 'unusualLineTerminators', 'viewportSemanticTokens', 'wordHighlighter', 'wordOperations', 'wordPartOperations']
+      }
+    ])
+  }
+}
+
+```
+
+**4、官网示例** https://microsoft.github.io/monaco-editor/playground.html?source=v0.44.0#example-creating-the-editor-hello-world
+
+**5、提高组件的通用性，方便父组件拿到数据**
+
+monaco在读写值时，要使用 toRaw(编辑器示例) 的语法来执行操作，否则会卡死
+
+![image-20231110201200113](assets/image-20231110201200113.png)
+
+![image-20231110202100860](assets/image-20231110202100860.png)
+
+```ts
+<template>
+  <div id="code-editor" ref="codeEditorRef"></div>
+</template>
+
+<script setup lang="ts">
+import * as monaco from "monaco-editor";
+import { onMounted, ref, toRaw, withDefaults, defineProps } from "vue";
+// 这是为了方便拿到code-editor元素
+const codeEditorRef = ref();
+const codeEditor = ref();
+/**
+ * 定义组件属性的类型
+ */
+interface Props {
+  value: string;
+  hanndleChange: (v: string) => void;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  value: () => "",
+  hanndleChange: (v: string) => console.log(v),
+});
+
+onMounted(() => {
+  if (!codeEditorRef.value) {
+    return;
+  }
+  codeEditor.value = monaco.editor.create(codeEditorRef.value, {
+    value: props.value,
+    language: "java",
+    automaticLayout: true,
+    colorDecorators: true,
+    minimap: {
+      enabled: true,
+    },
+    readOnly: false,
+    lineNumbers: "on",
+    theme: "vs-dark",
+  });
+  codeEditor.value.onDidChangeModelContent(() => {
+    props.hanndleChange(toRaw(codeEditor.value).getValue());
+  });
+});
+</script>
+
+<style scoped></style>
+```
+
+**6、测试**
+
+![image-20231110202247883](assets/image-20231110202247883.png)
+
+![image-20231110202429615](assets/image-20231110202429615.png)
+
+![image-20231110202938492](assets/image-20231110202938492.png)
 
 
 
 
 
+###  题目模块
+
+> 后端编写了很多增删改查接口，前端需要使用OpenAPI插件，自动生成后端接口调用代码
+>
+> ```
+> openapi --input "http://localhost:8085/api/v2/api-docs" --output ./generated --client axios
+> ```
+>
+> 生成后需要还原一些配置
+>
+> ![image-20231111093204723](assets/image-20231111093204723.png)
+
+**小知识-自定义代码模板**
+
+1、在JetBrains 系列编辑器中打开设置，搜索live templates
+
+![image-20231111094612316](assets/image-20231111094612316.png)
+
+2、先创建一个自定义模板组，在组下创建一个代码模板
+
+![image-20231111094708981](assets/image-20231111094708981.png)
+
+![image-20231111094828506](assets/image-20231111094828506.png)
+
+3、实例模板
+
+```vue
+<template>
+  <div id="$fileName$"></div>
+</template>
+
+<script setup lang="ts"></script>
+$END$
+<style scoped>
+#$fileName$ {
+}
+</style>
+```
+
+![image-20231111095525630](assets/image-20231111095525630.png)
+
+![image-20231111095213189](assets/image-20231111095213189.png)
+
+注意！！！其中的fileName是根据表达式自动生成的
+
+#### 题目创建页
+
+**1、定义路由**
+
+![image-20231111113604798](assets/image-20231111113604798.png)
+
+**2、修改背景色**
+
+![image-20231111113652747](assets/image-20231111113652747.png)
+
+**3、富文本编辑器添加mode属性**
+
+![image-20231111114026683](assets/image-20231111114026683.png)
+
+![image-20231111114051476](assets/image-20231111114051476.png)
+
+![image-20231111114455178](assets/image-20231111114455178.png)
+
+![image-20231111114533906](assets/image-20231111114533906.png)
+
+https://github.com/bytedance/bytemd
+
+**4、开发页面**
+
+![image-20231111115155779](assets/image-20231111115155779.png)
+
+![image-20231111115536849](assets/image-20231111115536849.png)
+
+![image-20231111115623543](assets/image-20231111115623543.png)
+
+![image-20231111120300152](assets/image-20231111120300152.png)
+
+![image-20231111120720797](assets/image-20231111120720797.png)
+
+![image-20231111120823619](assets/image-20231111120823619.png)
+
+![image-20231111121011245](assets/image-20231111121011245.png)
+
+![image-20231111121134747](assets/image-20231111121134747.png)
+
+**5、使用的组件**
+
+![image-20231111121311996](assets/image-20231111121311996.png)
+
+![image-20231111121335150](assets/image-20231111121335150.png)
+
+![image-20231111121355261](assets/image-20231111121355261.png)
+
+![image-20231111121410690](assets/image-20231111121410690.png)
+
+**6、展示**
+
+![image-20231111121437265](assets/image-20231111121437265.png)
+
+![image-20231111121449579](assets/image-20231111121449579.png)
+
+![image-20231111121458457](assets/image-20231111121458457.png)
+
+#### 题目管理页（管理员）
+
+- 删除
+- 修改
+
+**1、定义路由**
+
+![image-20231111131007191](assets/image-20231111131007191.png)
+
+**2、页面开发**
+
+![image-20231111150034749](assets/image-20231111150034749.png)
+
+![image-20231111150338586](assets/image-20231111150338586.png)
+
+![image-20231111150417510](assets/image-20231111150417510.png)
+
+![image-20231111150457858](assets/image-20231111150457858.png)
+
+![image-20231111150850954](assets/image-20231111150850954.png)
+
+**3、优化分页**
+
+![image-20231111154513958](assets/image-20231111154513958.png)
+
+![image-20231111154550006](assets/image-20231111154550006.png)
+
+![image-20231111154647298](assets/image-20231111154647298.png)
+
+#### 题目更新页
+
+**1、定义路由**
+
+![image-20231111153336215](assets/image-20231111153336215.png)
+
+**2、页面开发**
+
+![image-20231111152425574](assets/image-20231111152425574.png)
+
+![image-20231111151759618](assets/image-20231111151759618.png)
+
+![image-20231111152559699](assets/image-20231111152559699.png)
+
+#### 题目搜索页
+
+**1、定义路由**
+
+![image-20231111155703909](assets/image-20231111155703909.png)
+
+**2、安装moment库，帮助我们转换时间格式**
+
+http://momentjs.cn/
+
+![image-20231111170004808](assets/image-20231111170004808.png)
+
+ **3、页面开发**
+
+![image-20231111165322575](assets/image-20231111165322575.png)
+
+![image-20231111165505491](assets/image-20231111165505491.png)
+
+![image-20231111165856088](assets/image-20231111165856088.png)
+
+![image-20231111170100430](assets/image-20231111170100430.png)
+
+![image-20231111170404697](assets/image-20231111170404697.png)
+
+![image-20231111170432846](assets/image-20231111170432846.png)
+
+![image-20231111170640695](assets/image-20231111170640695.png)
+
+**4、展示**
+
+![image-20231111170902635](assets/image-20231111170902635.png)
+
+#### 在线做题页
+
+**1、定义路由**
+
+开启props为true，可以再页面中的props中直接获取到动态参数
+
+![image-20231111172944997](assets/image-20231111172944997.png)
+
+**2、MDViewer富文本展示**
+
+![image-20231111205127779](assets/image-20231111205127779.png)
+
+**3、修改CodeEditor**
+
+![image-20231111205634831](assets/image-20231111205634831.png)
+
+![image-20231111205809882](assets/image-20231111205809882.png)
+
+![image-20231111210038502](assets/image-20231111210038502.png)
+
+![image-20231111210140555](assets/image-20231111210140555.png)
+
+**4、页面开发**
+
+![image-20231111211529893](assets/image-20231111211529893.png)
+
+![image-20231111212602889](assets/image-20231111212602889.png)
+
+![image-20231111213318248](assets/image-20231111213318248.png)
+
+![image-20231111213450602](assets/image-20231111213450602.png)
+
+![image-20231111213831285](assets/image-20231111213831285.png)
+
+![image-20231111214032411](assets/image-20231111214032411.png)
+
+![image-20231111214224566](assets/image-20231111214224566.png)
+
+**5、展示**
+
+![image-20231111214838459](assets/image-20231111214838459.png)
 
 
 
+### 判题模块预开发
+
+判题服务：调用代码沙箱，把代码和输入交给代码沙箱去执行
+
+代码沙箱：只负责接收代码和输入，返回编译运行的结果，不负责判题（可以作为独立的项目 / 服务，为其他需要运行代码的项目提供服务）
+
+![image-20231112093212793](assets/image-20231112093212793.png)
+
+**思考：**为什么代码沙箱要接收一组输入用例，输出一组运行结果
+
+每道题目有多个输入用例，如果每个输入用例单独调用一次代码沙箱，最终会多次调用接口，需要多次网络传输，程序要多次编译，要多次记录执行状态。（调用远程接口想办法尽量一次调用完成工作，减少不必要的多次调用，这是一种常见的性能优化方法）
+
+#### 代码沙箱
+
+**小知识 - Lombok Builder 注解**
+以前我们是 new 对象后，再逐行执行 set 方法的方式来给对象赋值的。
+还有另外一种可能更方便的方式 builder。
+
+1. 实体类加上 @Builder 等注解
+
+2. 可以使用链式的方式更方便地给对象赋值：
+
+**1、定义代码沙箱的接口，提高通用性**
+之后我们的项目代码只调用接口，不调用具体的实现类，这样在你使用其他的代码沙箱实现类时，就不用去修改名称了， 便于扩展。
+
+>  代码沙箱的请求接口中，timeLimit 可加可不加，可自行扩展，即时中断程序。我们的项目是通过判题服务最后来判断代码沙箱的执行时间有没有超过预期
+
+```java
+public interface CodeSandBox {
+
+    /**
+     * 执行代码
+     * @param executeCodeRequest
+     * @return
+     */
+    ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest);
+}
+```
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ExecuteCodeRequest {
+    private List<String> inputList;
+
+    private String code;
+
+    private String language;
+}
+```
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ExecuteCodeResponse {
+
+    private List<String> outputList;
+
+    /**
+     * 执行信息
+     */
+    private String message;
+
+    /**
+     * 执行状态
+     */
+    private Integer status;
+
+    /**
+     * 判题信息
+     */
+    private QuestionSubmitJudgeInfo judgeInfo;
+}
+```
+
+**2、定义多种不同的代码沙箱实现**
+示例代码沙箱：仅为了跑通业务流程
+
+```java
+/**
+ * 示例代码沙箱
+ */
+public class ExampleCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("示例代码沙箱");
+        return null;
+    }
+}
+```
+
+远程代码沙箱：实际调用接口的沙箱
+
+```java
+/**
+ * 远程代码沙箱（真正调用了我们开发的代码沙箱接口，代码沙箱不在本地实现，而是使用docker）
+ */
+public class RemoteCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("远程代码沙箱");
+        return null;
+    }
+}
+```
+
+第三方代码沙箱：调用网上现成的代码沙箱，https://github.com/criyle/go-judge
+
+```
+/**
+ * 第三方代码沙箱（调用网上现成的代码沙箱）
+ */
+public class ThirdPartyCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("第三方代码沙箱");
+        return null;
+    }
+}
+```
+
+**3、编写单元测试，验证单个代码沙箱的执行**
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+
+    @Test
+    void executeCode() {
+        CodeSandBox codeSandBox = new ExampleCodeSandBox();
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+问题：我们把 new 某个沙箱的代码写死了，如果后面项目要改用其他沙箱，可能要改很多地方的代码。
+
+**4、使用工厂模式，根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类**
+此处使用静态工厂模式，实现比较简单，符合我们的需求。
+
+```java
+/**
+ * 代码沙箱工厂（根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类）
+ */
+public class CodeSandBoxFactory {
+    /**
+     * 创建代码沙箱示例
+     *
+     * @param type 代码沙箱类型
+     * @return
+     */
+    public static CodeSandBox newInstance(String type) {
+        switch (type) {
+            case "example":
+                return new ExampleCodeSandBox();
+            case "remote":
+                return new RemoteCodeSandBox();
+            case "thirdParty":
+                return new ThirdPartyCodeSandBox();
+            default:
+                return new ExampleCodeSandBox();
+        }
+    }
+}
+```
+
+>  扩展思路：如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
+
+```java
+public static void main(String[] args) {
+    Scanner sc = new Scanner(System.in);
+    while (sc.hasNext()) {
+        String type = sc.nextLine();
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        List<String> inputList = Arrays.asList("1 2", "3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+由此，我们可以根据字符串动态生成实例，提高了通用性：
+
+**5、参数配置化**
+
+把项目中的一些可以交给用户去自定义的选项或参数，写到配置文件中。这样开发者只需要改配置文件，而不需要去看你的项目代码，就能够自定义使用你项目的更多功能。
+
+在 Spring 的 Bean 中通过 @Value 注解读取：
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Test
+    void executeCodeByValue() {
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+```yml
+codesandbox:
+  type: remote
+```
+
+6、代码沙箱能力增强
+比如：我们需要在调用代码沙箱前，输出请求参数日志；在代码沙箱调用后，输出响应结果日志，便于管理员去分析。
+
+每个代码沙箱类都写一遍 log.info？难道每次调用代码沙箱前后都执行 log？
+使用代理模式，提供一个 Proxy，来增强代码沙箱的能力（代理模式的作用就是增强能力）
+
+```java
+@Slf4j
+public class CodeSandBoxProxy implements CodeSandBox {
+
+    private final CodeSandBox codeSandBox;
+
+    public CodeSandBoxProxy(CodeSandBox codeSandBox) {
+        this.codeSandBox = codeSandBox;
+    }
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        log.info("代码沙箱请求信息，" + executeCodeRequest);
+        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(executeCodeRequest);
+        log.info("代码沙箱响应信息，" + executeCodeResponse);
+        return executeCodeResponse;
+    }
+}
+```
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Test
+    void executeCodeByValue_Proxy() {
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBoxProxy.executeCode(codeRequest);
+    }
+}
+```
+
+
+做一些额外的功能
+
+`代理模式的实现原理：`
+
+1. 实现被代理的接口
+2. 通过构造函数接受一个被代理的接口的实现类
+3. 调用被代理的接口实现类，在调用前后增加对应的操作
 
 
 
+**7、实现示例的代码沙箱**
 
+```java
+/**
+ * 示例代码沙箱
+ */
+public class ExampleCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        List<String> inputList = executeCodeRequest.getInputList();
 
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(inputList);
+        executeCodeResponse.setMessage("测试执行成功");
+        executeCodeResponse.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
+        QuestionSubmitJudgeInfo judgeInfo = new QuestionSubmitJudgeInfo();
+        judgeInfo.setMessage(JudgeInfoMessagenum.ACCEPTED.getText());
+        judgeInfo.setMemory(1000l);
+        judgeInfo.setTime(1000l);
+        executeCodeResponse.setJudgeInfo(judgeInfo);
 
+        return executeCodeResponse;
+    }
+}
+```
 
+#### 判题服务开发
+1、**定义单独的 judgeService 类，而不是把所有判题相关的代码写到 questionSubmitService 里，有利于后续的模块抽离、微服务改造。**、
+
+```java
+/**
+ * 怕媒体服务
+ */
+public interface JudgeService {
+
+    /**
+     * 判题
+     * @param questionSubmitId
+     * @return
+     */
+    QuestionSubmitVO doJudge(long questionSubmitId);
+}
+```
+
+判题服务业务流程
+1、传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
+2、如果题目提交状态不为等待中，就不用重复执行了
+3、更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
+4、调用沙箱，获取到执行结果
+5、根据沙箱的执行结果，设置题目的判题状态和信息
+
+判断逻辑
+
+1. 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+2. 依次判断每一项输出和预期输出是否相等
+3. 判题题目的限制是否符合要求
+4. 可能还有其他的异常情况
+
+```java
+@Service
+public class JudgeServiceImpl implements JudgeService {
+    @Resource
+    private QuestionService questionService;
+
+    @Resource
+    private QuestionSubmitService questionSubmitService;
+
+    @Resource
+    private JudgeManager judgeManager;
+
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Override
+    public QuestionSubmitVO doJudge(long questionSubmitId) {
+        // 1 传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
+        QuestionSubmit questionSubmit = questionSubmitService.getById(questionSubmitId);
+        if (questionSubmit == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "提交记录不存在");
+        }
+        Long questionId = questionSubmit.getQuestionId();
+        Question question = questionService.getById(questionId);
+        if (question == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "题目不存");
+        }
+        // 2 如果题目提交状态不为等待中，就不用重复执行了
+        if (!questionSubmit.getStatus().equals(QuestionSubmitStatusEnum.WAITING.getValue())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "已在判题");
+        }
+        // 3 更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
+        QuestionSubmit questionSubmitUpdate = new QuestionSubmit();
+        questionSubmitUpdate.setId(questionSubmitId);
+        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.RUNNING.getValue());
+        boolean update = questionSubmitService.updateById(questionSubmitUpdate);
+        if (!update) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+        }
+        // 4、调用沙箱，获取到执行结果
+        String code = questionSubmit.getCode();
+        // 获取输入用例
+        List<QuestionJudgeCase> judgeCaseList = JSONUtil.toList(question.getJudgeCase(), QuestionJudgeCase.class);
+        List<String> inputList = judgeCaseList.stream().map(QuestionJudgeCase::getInput).collect(Collectors.toList());
+
+        String language = questionSubmit.getLanguage();
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        ExecuteCodeResponse executeCodeResponse = codeSandBoxProxy.executeCode(codeRequest);
+        List<String> outputList = executeCodeResponse.getOutputList();
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+
+        JudgeContext judgeContext = new JudgeContext();
+        judgeContext.setOutputList(outputList);
+        judgeContext.setInputList(inputList);
+        judgeContext.setJudgeCaseList(judgeCaseList);
+        judgeContext.setQuestion(question);
+        judgeContext.setJudgeInfo(executeCodeResponse.getJudgeInfo());
+        judgeContext.setQuestionSubmit(questionSubmit);
+
+        QuestionSubmitJudgeInfo judgeInfo = judgeManager.doJudge(judgeContext);
+        // 修改提交记录的判题状态和判题信息
+        questionSubmitUpdate = new QuestionSubmit();
+        questionSubmitUpdate.setId(questionSubmitId);
+        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
+        questionSubmitUpdate.setJudgeInfo(JSONUtil.toJsonStr(judgeInfo));
+        update = questionSubmitService.updateById(questionSubmitUpdate);
+        if (!update) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+        }
+        return QuestionSubmitVO.objToVo(questionSubmitService.getById(questionSubmitId));
+    }
+}
+```
+
+**2、 策略模式优化**
+我们的判题策略可能会有很多种，比如：我们的代码沙箱本身执行程序需要消耗时间，这个时间可能不同的编程语言是不同的，比如沙箱执行 Java 要额外花 10 秒。
+
+我们可以采用策略模式，针对不同的情况，定义独立的策略，便于分别修改策略和维护。而不是把所有的判题逻辑、if ... else ... 代码全部混在一起写。
+
+实现步骤如下：
+1、定义判题策略接口，让代码更加通用化
+
+```java
+/**
+ * 判题策略
+ */
+public interface JudgeStrategy {
+    /**
+     * 执行判题
+     * @param judgeContext
+     * @return
+     */
+    QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext);
+}
+```
+
+2、定义判题上下文对象，用于定义在策略中传递的参数（可以理解为一种 DTO）
+
+```java
+@Data
+public class JudgeContext {
+
+    private List<String> inputList;
+    
+    private List<String> outputList;
+    
+    private List<QuestionJudgeCase> judgeCaseList;
+    
+    private Question question;
+    
+    private QuestionSubmitJudgeInfo judgeInfo;
+    
+    private QuestionSubmit questionSubmit;
+}
+```
+
+3、实现默认判题策略，先把 judgeService 中的代码搬运过来
+
+```java
+/**
+ * 默认判题策略
+ */
+public class DefaultJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = judgeInfo.getMemory();
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        if (time > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+```
+
+4、新增Java代码判题策略
+
+```java
+/**
+ * Java判题策略
+ */
+public class JavaJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     *
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = judgeInfo.getMemory();
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        // java程序需要额外执行10秒钟
+        long JAVA_EXTRA_TIME_COST = 10000L;
+        if (time - JAVA_EXTRA_TIME_COST > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+```
+
+5、通过 if ... else ... 的方式选择使用哪种策略
+
+但是，如果选择某种判题策略的过程都写在调用判题服务的代码中，虽则判题策略越来越多，代码会越来越复杂，会有大量 if ... else ...，所以建议单独编写一个判断策略的类。
+
+6、定义 JudgeManager，目的是尽量简化对判题功能的调用，让调用方写最少的代码、调用最简单。通过JudgeContext上下文对象获取
+
+编程语言，根据编程语言选择判题策略，判题策略根据上下文对象执行最终的判题。JudgeServiceImpl只需要调用JudegManager的doJudge方法即可完成判题
+
+```java
+/**
+ * 判题管理（简化代码）
+ */
+@Service
+public class JudgeManager {
+
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext context) {
+        QuestionSubmit questionSubmit = context.getQuestionSubmit();
+        String language = questionSubmit.getLanguage();
+        JudgeStrategy judgeStrategy = new DefaultJudgeStrategy();
+        if ("java".equals(language)) {
+            judgeStrategy = new JavaJudgeStrategy();
+        }
+        return judgeStrategy.doJudge(context);
+    }
+}
+```
+
+![image-20231112145329849](assets/image-20231112145329849.png)
+
+![image-20231112145400878](assets/image-20231112145400878.png)
 
 
 
@@ -2378,5 +3442,14 @@ router.beforeEach(async (to, from, next) => {
 - Remote Judge
 - 完善的评测功能：普通测评、特殊测评、交互测评、在线自测、子任务分组评测、文件IO
 - 统计分析提交记录
-- 权限校验
 - 根据通过率来自动给题目打难易度标签
+- 提交统计页
+- 用户个人页
+- 用diff editor帮助用户对比自己的代码和标准答案 https://microsoft.github.io/monaco-editor https://microsoft.github.io/monaco-editor/playground.html?source=v0.44.0#example-creating-the-diffeditor-hello-diff-world
+- 优化题目管理页
+- 增加一个查看代码沙箱状态的接口
+- 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
+
+## 踩坑
+
+![image-20231111144923288](assets/image-20231111144923288.png)

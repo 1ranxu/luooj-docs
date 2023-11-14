@@ -127,14 +127,14 @@ OJ （Online Judge 在线判题系统）
 
 - 库表设计
 - 后端增删改查接口开发
+- 判题模块预开发
+  - 代码沙箱
+  - 判题服务
 - 代码沙箱
-- 系统优化
-  - 微服务改造
 
 **前端**
 
 - 通用项目模板搭建
-
 - 题目模块
   - 题目创建页（管理员）
 
@@ -152,7 +152,8 @@ OJ （Online Judge 在线判题系统）
   - 在线做题页（ 用户&管理员）
 
   - 题目提交列表页（用户&管理员）
-- 判题模块
+
+
 
 
 ## OJ系统实现方案
@@ -2032,6 +2033,1578 @@ public enum JudgeInfoMessagenum {
 
 
 
+### 判题模块预开发
+
+判题服务：调用代码沙箱，把代码和输入交给代码沙箱去执行
+
+代码沙箱：只负责接收代码和输入，返回编译运行的结果，不负责判题（可以作为独立的项目 / 服务，为其他需要运行代码的项目提供服务）
+
+![image-20231112093212793](assets/image-20231112093212793.png)
+
+**思考：**为什么代码沙箱要接收一组输入用例，输出一组运行结果
+
+每道题目有多个输入用例，如果每个输入用例单独调用一次代码沙箱，最终会多次调用接口，需要多次网络传输，程序要多次编译，要多次记录执行状态。（调用远程接口想办法尽量一次调用完成工作，减少不必要的多次调用，这是一种常见的性能优化方法）
+
+#### 代码沙箱
+
+**小知识 - Lombok Builder 注解**
+以前我们是 new 对象后，再逐行执行 set 方法的方式来给对象赋值的。
+还有另外一种可能更方便的方式 builder。
+
+1. 实体类加上 @Builder 等注解
+
+2. 可以使用链式的方式更方便地给对象赋值：
+
+**1、定义代码沙箱的接口，提高通用性**
+之后我们的项目代码只调用接口，不调用具体的实现类，这样在你使用其他的代码沙箱实现类时，就不用去修改名称了， 便于扩展。
+
+>  代码沙箱的请求接口中，timeLimit 可加可不加，可自行扩展，即时中断程序。我们的项目是通过判题服务最后来判断代码沙箱的执行时间有没有超过预期
+
+```java
+public interface CodeSandBox {
+
+    /**
+     * 执行代码
+     * @param executeCodeRequest
+     * @return
+     */
+    ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest);
+}
+```
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ExecuteCodeRequest {
+    private List<String> inputList;
+
+    private String code;
+
+    private String language;
+}
+```
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ExecuteCodeResponse {
+
+    private List<String> outputList;
+
+    /**
+     * 执行信息
+     */
+    private String message;
+
+    /**
+     * 执行状态
+     */
+    private Integer status;
+
+    /**
+     * 判题信息
+     */
+    private QuestionSubmitJudgeInfo judgeInfo;
+}
+```
+
+**2、定义多种不同的代码沙箱实现**
+示例代码沙箱：仅为了跑通业务流程
+
+```java
+/**
+ * 示例代码沙箱
+ */
+public class ExampleCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("示例代码沙箱");
+        return null;
+    }
+}
+```
+
+远程代码沙箱：实际调用接口的沙箱
+
+```java
+/**
+ * 远程代码沙箱（真正调用了我们开发的代码沙箱接口，代码沙箱不在本地实现，而是使用docker）
+ */
+public class RemoteCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("远程代码沙箱");
+        return null;
+    }
+}
+```
+
+第三方代码沙箱：调用网上现成的代码沙箱，https://github.com/criyle/go-judge
+
+```
+/**
+ * 第三方代码沙箱（调用网上现成的代码沙箱）
+ */
+public class ThirdPartyCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("第三方代码沙箱");
+        return null;
+    }
+}
+```
+
+**3、编写单元测试，验证单个代码沙箱的执行**
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+
+    @Test
+    void executeCode() {
+        CodeSandBox codeSandBox = new ExampleCodeSandBox();
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+问题：我们把 new 某个沙箱的代码写死了，如果后面项目要改用其他沙箱，可能要改很多地方的代码。
+
+**4、使用工厂模式，根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类**
+此处使用静态工厂模式，实现比较简单，符合我们的需求。
+
+```java
+/**
+ * 代码沙箱工厂（根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类）
+ */
+public class CodeSandBoxFactory {
+    /**
+     * 创建代码沙箱示例
+     *
+     * @param type 代码沙箱类型
+     * @return
+     */
+    public static CodeSandBox newInstance(String type) {
+        switch (type) {
+            case "example":
+                return new ExampleCodeSandBox();
+            case "remote":
+                return new RemoteCodeSandBox();
+            case "thirdParty":
+                return new ThirdPartyCodeSandBox();
+            default:
+                return new ExampleCodeSandBox();
+        }
+    }
+}
+```
+
+>  扩展思路：如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
+
+```java
+public static void main(String[] args) {
+    Scanner sc = new Scanner(System.in);
+    while (sc.hasNext()) {
+        String type = sc.nextLine();
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        List<String> inputList = Arrays.asList("1 2", "3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+由此，我们可以根据字符串动态生成实例，提高了通用性：
+
+**5、参数配置化**
+
+把项目中的一些可以交给用户去自定义的选项或参数，写到配置文件中。这样开发者只需要改配置文件，而不需要去看你的项目代码，就能够自定义使用你项目的更多功能。
+
+在 Spring 的 Bean 中通过 @Value 注解读取：
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Test
+    void executeCodeByValue() {
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBox.executeCode(codeRequest);
+    }
+}
+```
+
+```yml
+codesandbox:
+  type: remote
+```
+
+**6、代码沙箱能力增强**
+比如：我们需要在调用代码沙箱前，输出请求参数日志；在代码沙箱调用后，输出响应结果日志，便于管理员去分析。
+
+每个代码沙箱类都写一遍 log.info？难道每次调用代码沙箱前后都执行 log？
+使用代理模式，提供一个 Proxy，来增强代码沙箱的能力（代理模式的作用就是增强能力）
+
+```java
+@Slf4j
+public class CodeSandBoxProxy implements CodeSandBox {
+
+    private final CodeSandBox codeSandBox;
+
+    public CodeSandBoxProxy(CodeSandBox codeSandBox) {
+        this.codeSandBox = codeSandBox;
+    }
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        log.info("代码沙箱请求信息，" + executeCodeRequest);
+        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(executeCodeRequest);
+        log.info("代码沙箱响应信息，" + executeCodeResponse);
+        return executeCodeResponse;
+    }
+}
+```
+
+```java
+@SpringBootTest
+class CodeSandBoxTest {
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Test
+    void executeCodeByValue_Proxy() {
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+        List<String> inputList= Arrays.asList("1 2","3 4");
+        String code = "int main(){}";
+        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        codeSandBoxProxy.executeCode(codeRequest);
+    }
+}
+```
+
+`代理模式的实现原理：`
+
+1. 实现被代理的接口
+2. 通过构造函数接受一个被代理的接口的实现类
+3. 调用被代理的接口实现类，在调用前后增加对应的操作
+
+
+
+**7、实现示例代码沙箱**
+
+```java
+/**
+ * 示例代码沙箱
+ */
+public class ExampleCodeSandBox implements CodeSandBox {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        List<String> inputList = executeCodeRequest.getInputList();
+
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(inputList);
+        executeCodeResponse.setMessage("测试执行成功");
+        executeCodeResponse.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
+        QuestionSubmitJudgeInfo judgeInfo = new QuestionSubmitJudgeInfo();
+        judgeInfo.setMessage(JudgeInfoMessagenum.ACCEPTED.getText());
+        judgeInfo.setMemory(1000l);
+        judgeInfo.setTime(1000l);
+        executeCodeResponse.setJudgeInfo(judgeInfo);
+
+        return executeCodeResponse;
+    }
+}
+```
+
+#### 判题服务开发
+
+1、**定义单独的 judgeService 类，而不是把所有判题相关的代码写到 questionSubmitService 里，有利于后续的模块抽离、微服务改造。**、
+
+```java
+/**
+ * 怕媒体服务
+ */
+public interface JudgeService {
+
+    /**
+     * 判题
+     * @param questionSubmitId
+     * @return
+     */
+    QuestionSubmitVO doJudge(long questionSubmitId);
+}
+```
+
+判题服务业务流程
+1、传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
+2、如果题目提交状态不为等待中，就不用重复执行了
+3、更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
+4、调用沙箱，获取到执行结果
+5、根据沙箱的执行结果，设置题目的判题状态和信息
+
+判断逻辑
+
+1. 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+2. 依次判断每一项输出和预期输出是否相等
+3. 判题题目的限制是否符合要求
+4. 可能还有其他的异常情况
+
+```java
+@Service
+public class JudgeServiceImpl implements JudgeService {
+    @Resource
+    private QuestionService questionService;
+
+    @Resource
+    private QuestionSubmitService questionSubmitService;
+
+    @Resource
+    private JudgeManager judgeManager;
+
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Override
+    public QuestionSubmitVO doJudge(long questionSubmitId) {
+        // 1 传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
+        QuestionSubmit questionSubmit = questionSubmitService.getById(questionSubmitId);
+        if (questionSubmit == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "提交记录不存在");
+        }
+        Long questionId = questionSubmit.getQuestionId();
+        Question question = questionService.getById(questionId);
+        if (question == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "题目不存");
+        }
+        // 2 如果题目提交状态不为等待中，就不用重复执行了
+        if (!questionSubmit.getStatus().equals(QuestionSubmitStatusEnum.WAITING.getValue())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "已在判题");
+        }
+        // 3 更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
+        QuestionSubmit questionSubmitUpdate = new QuestionSubmit();
+        questionSubmitUpdate.setId(questionSubmitId);
+        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.RUNNING.getValue());
+        boolean update = questionSubmitService.updateById(questionSubmitUpdate);
+        if (!update) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+        }
+        // 4、调用沙箱，获取到执行结果
+        String code = questionSubmit.getCode();
+        // 获取输入用例
+        List<QuestionJudgeCase> judgeCaseList = JSONUtil.toList(question.getJudgeCase(), QuestionJudgeCase.class);
+        List<String> inputList = judgeCaseList.stream().map(QuestionJudgeCase::getInput).collect(Collectors.toList());
+
+        String language = questionSubmit.getLanguage();
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+                .inputList(inputList)
+                .code(code)
+                .language(language)
+                .build();
+        ExecuteCodeResponse executeCodeResponse = codeSandBoxProxy.executeCode(codeRequest);
+        List<String> outputList = executeCodeResponse.getOutputList();
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+
+        JudgeContext judgeContext = new JudgeContext();
+        judgeContext.setOutputList(outputList);
+        judgeContext.setInputList(inputList);
+        judgeContext.setJudgeCaseList(judgeCaseList);
+        judgeContext.setQuestion(question);
+        judgeContext.setJudgeInfo(executeCodeResponse.getJudgeInfo());
+        judgeContext.setQuestionSubmit(questionSubmit);
+
+        QuestionSubmitJudgeInfo judgeInfo = judgeManager.doJudge(judgeContext);
+        // 修改提交记录的判题状态和判题信息
+        questionSubmitUpdate = new QuestionSubmit();
+        questionSubmitUpdate.setId(questionSubmitId);
+        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
+        questionSubmitUpdate.setJudgeInfo(JSONUtil.toJsonStr(judgeInfo));
+        update = questionSubmitService.updateById(questionSubmitUpdate);
+        if (!update) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+        }
+        return QuestionSubmitVO.objToVo(questionSubmitService.getById(questionSubmitId));
+    }
+}
+```
+
+**2、 策略模式优化**
+我们的判题策略可能会有很多种，比如：我们的代码沙箱本身执行程序需要消耗时间，这个时间可能不同的编程语言是不同的，比如沙箱执行 Java 要额外花 10 秒。
+
+我们可以采用策略模式，针对不同的情况，定义独立的策略，便于分别修改策略和维护。而不是把所有的判题逻辑、if ... else ... 代码全部混在一起写。
+
+实现步骤如下：
+1、定义判题策略接口，让代码更加通用化
+
+```java
+/**
+ * 判题策略
+ */
+public interface JudgeStrategy {
+    /**
+     * 执行判题
+     * @param judgeContext
+     * @return
+     */
+    QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext);
+}
+```
+
+2、定义判题上下文对象，用于定义在策略中传递的参数（可以理解为一种 DTO）
+
+```java
+@Data
+public class JudgeContext {
+
+    private List<String> inputList;
+    
+    private List<String> outputList;
+    
+    private List<QuestionJudgeCase> judgeCaseList;
+    
+    private Question question;
+    
+    private QuestionSubmitJudgeInfo judgeInfo;
+    
+    private QuestionSubmit questionSubmit;
+}
+```
+
+3、实现默认判题策略，先把 judgeService 中的代码搬运过来
+
+```java
+/**
+ * 默认判题策略
+ */
+public class DefaultJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = judgeInfo.getMemory();
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        if (time > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+```
+
+4、新增Java代码判题策略
+
+```java
+/**
+ * Java判题策略
+ */
+public class JavaJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     *
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = judgeInfo.getMemory();
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        // java程序需要额外执行10秒钟
+        long JAVA_EXTRA_TIME_COST = 10000L;
+        if (time - JAVA_EXTRA_TIME_COST > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+```
+
+5、通过 if ... else ... 的方式选择使用哪种策略
+
+但是，如果选择某种判题策略的过程都写在调用判题服务的代码中，虽则判题策略越来越多，代码会越来越复杂，会有大量 if ... else ...，所以建议单独编写一个判断策略的类。
+
+6、定义 JudgeManager，目的是尽量简化对判题功能的调用，让调用方写最少的代码、调用最简单。通过JudgeContext上下文对象获取
+
+编程语言，根据编程语言选择判题策略，判题策略根据上下文对象执行最终的判题。JudgeServiceImpl只需要调用JudegManager的doJudge方法即可完成判题
+
+```java
+/**
+ * 判题管理（简化代码）
+ */
+@Service
+public class JudgeManager {
+
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext context) {
+        QuestionSubmit questionSubmit = context.getQuestionSubmit();
+        String language = questionSubmit.getLanguage();
+        JudgeStrategy judgeStrategy = new DefaultJudgeStrategy();
+        if ("java".equals(language)) {
+            judgeStrategy = new JavaJudgeStrategy();
+        }
+        return judgeStrategy.doJudge(context);
+    }
+}
+```
+
+![image-20231112145329849](assets/image-20231112145329849.png)
+
+![image-20231112145400878](assets/image-20231112145400878.png)
+
+
+
+### 代码沙箱
+
+代码沙箱：只负责接收代码和输入，返回编译运行的结果，不负责判题（可以作为独立的项目 / 服务，为其他需要运行代码的项目提供服务）
+
+代码沙箱：接收代码 => 编译代码 => 执行代码
+
+#### Java原生实现代码沙箱
+
+##### 新建项目luooj-code-sandbox
+
+> 由于代码沙箱是能够通过 API 调用的独立服务，所以新建一个SpringBoot Web项目，最终该项目需要提供一个能够执行代码，操作代码沙箱的接口
+
+![image-20231112213816857](assets/image-20231112213816857.png)
+
+![image-20231112213849317](assets/image-20231112213849317.png)
+
+**启动配置**
+
+```yml
+server:
+  port: 5050
+```
+
+**编写测试接口**
+
+```java
+@RestController
+public class MainController {
+    @GetMapping("/health")
+    public String healthCheck() {
+        return "ok";
+    }
+}
+```
+
+**获取必要的类**
+
+将 luooj-backend 项目的 model 包和 CodeSandBox接口复制到 luooj-code-sandbox 项目，并把 QuestionSubmitJudgeInfo 类复制到
+
+luooj-code-sandbox 项目的 model 包
+
+
+
+##### **Java 程序执行流程**
+
+原生：尽可能不借助第三方库和依赖，用最干净、最原始的方式实现代码沙箱
+
+接收代码 => 编译代码（javac） => 执行代码（java）
+
+1. 先编写示例代码，注意要去掉包名，放到 resources 目录下
+
+![image-20231113102352886](assets/image-20231113102352886.png)
+
+2. 用 javac 命令编译代码：
+
+![image-20231113102741227](assets/image-20231113102741227.png)
+
+![image-20231113103609739](assets/image-20231113103609739.png)
+
+3. 用 java 命令执行代码
+
+![image-20231113102728964](assets/image-20231113102728964.png)
+
+4. 程序中文乱码问题：编译后的 class 文件出现中文乱码
+
+原因：命令行终端的编码是 GBK，和 java 代码文件本身的编码 UTF-8 不一致，导致乱码。
+
+5. 通过 chcp 命令查看命令行编码，GBK 是 936，UTF-8 是 65001。
+
+![image-20231113102711394](assets/image-20231113102711394.png)
+
+但是 不建议 大家改变终端编码来解决编译乱码，因为其他运行你代码的人如果不改变终端编码环境，也会出现乱码，兼容性很差。
+
+6. 推荐的 javac 编译命令，用 -encoding utf-8 参数解决
+
+![image-20231113103325154](assets/image-20231113103325154.png)
+
+![image-20231113103507715](assets/image-20231113103507715.png)
+
+##### **统一类名**
+实际的 OJ 系统中，对用户输入的代码会有一定的要求。便于系统进行统一处理和判题。
+此处我们把用户输入代码的类名限制为 Main（参考 Poj），可以减少编译时类名不一致的风险；而且不用从用户代码中提取类名，更方便。
+文件名 Main.java，示例代码如下：
+
+```
+public class Main {
+    public static void main(String[] args) {
+        int a = Integer.parseInt(args[0]);
+        int b = Integer.parseInt(args[1]);
+        System.out.println("结果：a + b = " + (a + b));
+    }
+}
+```
+
+实际执行命令时
+
+![image-20231113104354247](assets/image-20231113104354247.png)
+
+##### **核心流程实现**
+核心实现思路：用程序代替人工，用程序来操作命令行，去编译执行代码
+核心依赖：Java 进程执行管理类 Process 
+
+1. 把用户的代码保存为文件
+2. 编译代码，得到 class 文件
+3. 执行代码，得到输出结果
+4. 收集整理输出结果
+5. 文件清理，释放空间
+6. 错误处理，提升程序健壮性
+
+**1、保存代码文件**
+
+1. 引入 Hutool 工具类，提高操作文件效率
+
+```java
+<!-- https://hutool.cn/docs/index.html#/-->
+<dependency>
+    <groupId>cn.hutool</groupId>
+    <artifactId>hutool-all</artifactId>
+    <version>5.8.8</version>
+</dependency>
+```
+
+新建目录，将每个用户的代码都存放在独立目录下，通过 UUID 随机生成目录名，便于隔离和维护
+
+```java
+String userDir = System.getProperty("user.dir");
+String globalCodePathName = userDir + File.separator + GLOBAL_CODE_DIR_NAME;
+// 判断全局代码目录是否存在，没有则新建
+if (!FileUtil.exist(globalCodePathName)) {
+    File file = FileUtil.mkdir(globalCodePathName);
+}
+// 把用户的代码隔离存放
+String userCodeParentPath = globalCodePathName + File.separator + UUID.randomUUID();
+String userCodePath = userCodeParentPath + File.separator + GLOBAL_JAVA_CLASS_NAME;
+File userCodeFile = FileUtil.writeString(code, userCodePath, StandardCharsets.UTF_8);
+```
+
+
+
+**2、编译代码**
+
+1. 使用 Process 类在终端执行命令
+
+```
+String complieCmd = String.format("javac -encoding utf-8 %s", userCodeFile.getAbsolutePath());
+Process compileProcess = Runtime.getRuntime().exec(complieCmd);
+```
+
+2. 执行 process.waitFor 等待程序执行完成，并通过返回的 exitValue 判断程序是否正常返回，然后从 Process 的输入流 inputStream 和错误流 errorStream 获取控制台输出。
+
+```java
+int exitValue = compileProcess.waitFor();
+// 正常退出
+if (exitValue == 0) {
+    System.out.println("编译成功");
+    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(compileProcess.getInputStream()));
+    StringBuilder stringBuilder = new StringBuilder();
+    String compileOutputLine = "";
+    while ((compileOutputLine = bufferedReader.readLine()) != null) {
+        stringBuilder.append(compileOutputLine);
+    }
+    System.out.println(stringBuilder.toString());
+} else {
+    // 异常退出
+    System.out.println("编译失败，错误码：" + exitValue);
+    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(compileProcess.getInputStream()));
+    StringBuilder stringBuilder = new StringBuilder();
+    String compileOutputLine = "";
+    while ((compileOutputLine = bufferedReader.readLine()) != null) {
+        stringBuilder.append(compileOutputLine);
+    }
+    System.out.println(stringBuilder.toString());
+    
+    BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(compileProcess.getErrorStream()));
+    StringBuilder errorStringBuilder = new StringBuilder();
+    String errorCompileOutputLine = "";
+    while ((errorCompileOutputLine = errorBufferedReader.readLine()) != null) {
+        errorStringBuilder.append(errorCompileOutputLine);
+    }
+    System.out.println(errorCompileOutputLine.toString());
+}
+```
+
+可以把上述代码提取为工具类 ProcessUtils，执行进程并获取输出，并且使用 StringBuilder 拼接控制台输出信息
+
+```java
+@Data
+public class ExecuteMessage {
+    private Integer exitValue;
+
+    private String message;
+
+    private String errorMessage;
+
+    private Long time;
+}
+```
+
+```java
+/**
+ * 、
+ * 进程工具类
+ */
+public class ProcessUtils {
+    /**
+     * 执行进程，并记录信息
+     *
+     * @param process
+     * @param opName
+     * @return
+     */
+    public static ExecuteMessage runProcessAndGetMessage(Process process, String opName) {
+        ExecuteMessage executeMessage = new ExecuteMessage();
+        try {
+            StopWatch watch = new StopWatch();
+            watch.start();
+            int exitValue = process.waitFor();
+            executeMessage.setExitValue(exitValue);
+            if (exitValue == 0) {
+                System.out.println(opName + "成功");
+                BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                StringBuilder compileOutputStringBuilder = new StringBuilder();
+                String compileOutputLine = "";
+                while ((compileOutputLine = bufferedReader.readLine()) != null) {
+                    compileOutputStringBuilder.append(compileOutputLine).append("\n");
+                }
+                executeMessage.setMessage(compileOutputStringBuilder.toString());
+            } else {
+                // 异常退出
+                System.out.println(opName + "失败，错误码：" + exitValue);
+                BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                StringBuilder compileOutputStringBuilder = new StringBuilder();
+                String compileOutputLine = "";
+                while ((compileOutputLine = bufferedReader.readLine()) != null) {
+                    compileOutputStringBuilder.append(compileOutputLine).append("\n");
+                }
+                executeMessage.setMessage(compileOutputStringBuilder.toString());
+
+                BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+                StringBuilder errorCompileOutputStringBuilder = new StringBuilder();
+                String errorCompileOutputLine = "";
+                while ((errorCompileOutputLine = errorBufferedReader.readLine()) != null) {
+                    errorCompileOutputStringBuilder.append(errorCompileOutputLine).append("\n");
+                }
+                executeMessage.setErrorMessage(errorCompileOutputStringBuilder.toString());
+            }
+            watch.stop();
+            executeMessage.setTime(watch.getLastTaskTimeMillis());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return executeMessage;
+    }
+}
+```
+
+**3、执行程序**
+同样是使用 Process 类运行 java 命令，命令中记得增加 -Dfile.encoding=UTF-8 参数，解决输出结果中文乱码
+
+**小知识**
+
+- `java -cp` 是Java命令行的一个选项，用于指定类路径（classpath）。在运行Java程序时，需要告诉Java虚拟机在哪里找到所需的类和资源文件。通过使用 `-cp` 或 `-classpath` 选项，可以指定一个或多个包含这些文件的目录或JAR文件。
+
+-  如果你有一个名为 `MyProgram.class` 的类文件，它位于 `/home/user/myclasses` 目录下，你可以使用以下命令运行该程序：
+
+  ```
+   java -cp /home/user/myclasses Main
+  ```
+
+- 如果你还有一个名为 `lib.jar` 的JAR文件，其中包含 `MyProgram` 类所需的其他类和资源文件，你可以将它们一起添加到类路径中
+
+  ```
+  java -cp /home/user/myclasses:/home/user/lib.jar MyProgram
+  ```
+
+```java
+List<ExecuteMessage> executeMessageList = new ArrayList<>();
+for (String input : inputList) {
+       String runCmd = String.format("java -Dfile.encoding=utf-8 -cp %s Main %s", userCodeParentPath, input);
+    try {
+        Process runProcess = Runtime.getRuntime().exec(runCmd);
+        ExecuteMessage executeMessage = ProcessUtils.runProcessAndGetMessage(runProcess, "运行");
+        System.out.println(executeMessage);
+        executeMessageList.add(executeMessage);
+    } catch (IOException e) {
+        throw new RuntimeException(e);
+    }
+}
+```
+
+上述命令适用于执行从输入参数（args）中获取值的代码。
+
+很多 OJ 都是 ACM 模式，需要和用户交互，让用户不断输入内容并获取输出，比如：
+
+```java
+public class Main {
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        int a = scanner.nextInt();
+        int b = scanner.nextInt();
+        System.out.println("结果：a + b = " + (a + b));
+    }
+}
+```
+
+对于此类程序，我们需要使用 OutputStream 向程序终端发送参数，并及时获取结果，注意最后要关闭流释放资源。
+
+```java
+/**
+ * 执行交互式进程，并记录信息
+ *
+ * @param process
+ * @return
+ */
+public static ExecuteMessage runInteractProcessAndGetMessage(Process process, String args) {
+    ExecuteMessage executeMessage = new ExecuteMessage();
+    try {
+        // 使用 OutputStream 向程序终端发送参数
+        OutputStream outputStream = process.getOutputStream();
+        BufferedWriter bufferedWriter = new BufferedWriter(new OutputStreamWriter(outputStream));
+        String[] split = args.split(" ");
+        String jonin = StrUtil.join("\n", split) + "\n";
+        bufferedWriter.write(jonin);
+        // 相当于输了回车，输入结束
+        bufferedWriter.flush();
+        // 逐行获取进程的正常输出
+        InputStream inputStream = process.getInputStream();
+        BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(inputStream));
+        StringBuilder compileOutputStringBuilder = new StringBuilder();
+        String compileOutputLine = "";
+        while ((compileOutputLine = bufferedReader.readLine()) != null) {
+            compileOutputStringBuilder.append(compileOutputLine);
+        }
+        executeMessage.setMessage(compileOutputStringBuilder.toString());
+        process.waitFor();
+        // 关闭流释放资源
+        bufferedReader.close();
+        inputStream.close();
+        bufferedWriter.close();
+        outputStream.close();
+        process.destroy();
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+    return executeMessage;
+}
+```
+
+**4、整理输出**
+
+1. 通过 for 循环遍历执行结果，从中获取输出列表
+
+2. 获取程序执行时间：可以使用 Spring 的 StopWatch 获取一段程序的执行时间
+
+   ```java
+   StopWatch watch = new StopWatch();
+   watch.start();
+   watch.stop();
+   executeMessage.setTime(watch.getLastTaskTimeMillis());
+   ```
+
+此处我们使用一组输入用例中某个用例的执行时长的最大值来统计时间，便于后续判题服务计算程序是否超时
+
+```java
+ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+List<String> outputList = new ArrayList<>();
+// 一组输入用例中某个用例执行时长的最大值，便于判断是否超时
+long maxTime = 0;
+for (ExecuteMessage executeMessage : executeMessageList) {
+    String errorMessage = executeMessage.getErrorMessage();
+    if (StrUtil.isNotBlank(errorMessage)) {
+        executeCodeResponse.setMessage(errorMessage);
+        // 执行中存在错误
+        executeCodeResponse.setStatus(3);
+        break;
+    }
+    outputList.add((executeMessage.getMessage()));
+    Long time = executeMessage.getTime();
+    if (time != null) {
+        maxTime = Math.max(maxTime, time);
+    }
+}
+executeCodeResponse.setOutputList(outputList);
+// 表示正常运行完成
+if (outputList.size() == inputList.size()) {
+    executeCodeResponse.setStatus(2);
+}
+QuestionSubmitJudgeInfo questionSubmitJudgeInfo = new QuestionSubmitJudgeInfo();
+questionSubmitJudgeInfo.setTime(maxTime);
+//要借助第三方库来获取内存占用，非常麻烦，此处不做实现
+// questionSubmitJudgeInfo.setMemory();
+executeCodeResponse.setJudgeInfo(questionSubmitJudgeInfo);
+```
+
+> 扩展：可以每个测试用例都有一个独立的内存、时间占用的统计
+
+获取内存信息
+实现比较复杂，因为无法从 Process 对象中获取到子进程号，也不推荐在 Java 原生实现代码沙箱的过程中获取。
+
+
+
+**5、文件清理**
+防止服务器空间不足，删除代码目录
+
+```java
+if (userCodeFile.getParentFile() != null) {
+    boolean del = FileUtil.del(userCodeParentPath);
+    System.out.println("删除" + (del ? "成功" : "失败"));
+}
+```
+
+**6、错误处理**
+封装一个错误处理方法，当程序抛出异常时，直接返回错误响应。
+示例代码如下
+
+```java
+private ExecuteCodeResponse getErrorResponse(Throwable e) {
+    ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+    executeCodeResponse.setOutputList(new ArrayList<>());
+    executeCodeResponse.setMessage(e.getMessage());
+    executeCodeResponse.setStatus(3);
+    executeCodeResponse.setJudgeInfo(new QuestionSubmitJudgeInfo());
+    return executeCodeResponse;
+}
+```
+
+##### Java 程序异常情况
+用户提交恶意代码，怎么办？
+
+**1、执行超时**
+占用时间资源，导致程序卡死，不释放资源：
+
+把写好的代码复制到 resources 中，并且要把类名改为 Main！包名一定要去掉！
+
+```java
+/**
+ * 无限睡眠（阻塞程序执行）
+ */
+public class Main {
+    private static final long ONE_HOUR = 60 * 60 * 1000;
+
+    public static void main(String[] args) throws Exception {
+        Thread.sleep(ONE_HOUR);
+    }
+}
+```
+
+**2、占用内存**
+占用内存资源，导致空间浪费：
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 无限占用系统内存
+ */
+public class Main {
+    public static void main(String[] args) {
+        List<byte[]> bytesList =new ArrayList<>();
+        while (true){
+            bytesList.add(new byte[1024]);
+        }
+    }
+}
+```
+
+实际运行上述程序时，我们会发现，内存占用到达一定空间后，程序就自动报错：java.lang.OutOfMemoryError: Java heap space，而不是无限增加内存占用，直到系统死机。
+这是 JVM 的一个保护机制。
+
+> 可以使用 JVisualVM 或 JConsole （在Java的bin目录）工具，连接到 JVM 虚拟机上来可视化查看运行状态。
+
+![image-20231114101323839](assets/image-20231114101323839.png)
+
+**3、读文件，信息泄露**
+比如直接通过相对路径获取项目配置文件，获取到密码
+
+```java
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+
+/**
+ * 读取服务器文件
+ */
+public class Main {
+    public static void main(String[] args) throws IOException {
+        String userDir = System.getProperty("user.dir");
+        String filePath = userDir + File.separator + "src/main/resources/application.yml";
+        List<String> allLines = Files.readAllLines(Paths.get(filePath));
+        System.out.println(String.join("\n",allLines));
+    }
+}
+```
+
+**4、写文件，植入木马**
+可以直接向服务器上写入文件，比如一个木马程序：java -version 2>&1（示例命令）
+
+1. java -version 用于显示 Java 版本信息。这会将版本信息输出到标准错误流（stderr）而不是标准输出流（stdout）。
+2. 2>&1 将标准错误流重定向到标准输出流。这样，Java 版本信息就会被发送到标准输出流。
+
+```java
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * 向服务器写文件（植入危险程序）
+ */
+public class Main {
+    public static void main(String[] args) throws IOException {
+        String userDir = System.getProperty("user.dir");
+        String filePath = userDir + File.separator + "src/main/resources/木马.bat";
+        String errorProgram = "java -version 2>&1";
+        Files.write(Paths.get(filePath), Arrays.asList(errorProgram));
+        System.out.println(String.join("植入木马成功"));
+    }
+}
+```
+
+**5、运行其他程序**
+直接通过 Process 执行危险程序，或者电脑上的其他程序
+
+```java
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * 运行其他程序（比如木马）
+ */
+public class Main {
+    public static void main(String[] args) throws IOException, InterruptedException {
+        String userDir = System.getProperty("user.dir");
+        String filePath = userDir + File.separator + "src/main/resources/木马.bat";
+        Process process = Runtime.getRuntime().exec(filePath);
+        process.waitFor();
+        BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        String compileOutputLine = "";
+        while ((compileOutputLine = bufferedReader.readLine()) != null) {
+            System.out.println(compileOutputLine);
+        }
+        System.out.println("执行木马成功");
+    }
+}
+```
+
+**6、执行高危操作**
+甚至都不用写木马文件，直接执行系统自带的危险命令！
+
+- 比如删除服务器的所有文件（太残暴、不演示）
+- 比如执行 dir（windows）、ls（linux） 获取你系统上的所有文件信息
+
+
+
+##### Java 程序安全控制
+针对上面的异常情况，分别有如下方案，可以提高程序安全性。
+
+1. 超时控制
+2. 限制给用户程序分配的资源
+3. 限制代码 - 黑白名单
+4. 限制用户的操作权限
+5. 运行环境隔离
+
+**1、超时控制**
+通过创建一个守护线程，超时后自动中断 Process 实现。
+
+```java
+new Thread(()->{
+    try {
+        Thread.sleep(TIMEOUT);
+        System.out.println("超时了，中断");
+        runProcess.destroy();
+    } catch (InterruptedException e) {
+        e.printStackTrace();
+    }
+}).start();
+```
+
+**2、限制资源分配**
+不能让每个 java 进程的执行占用的 JVM 最大堆内存空间都和系统默认的一致（默认8G，执行用户的题目代码也不需要这么多），建议设置小一点，比如说 256MB
+在启动 Java 程序时，可以指定 JVM 的参数：-Xmx256m（最大堆空间大小）
+
+```java
+String.format("java -Xmx256m -Dfile.encoding=utf-8 -cp %s Main %s", userCodeParentPath, input);
+```
+
+注意！-Xmx 参数或者JVM 的堆内存限制，不等同于系统实际占用的最大资源，可能会超出。
+如果需要更严格的内存限制，要在系统层面去限制，而不是 JVM 层面的限制。
+
+**小知识 - 什么是 cgroup？**
+
+Linux 系统，可以使用 cgroup 来实现对某个进程的 CPU、内存等资源的分配。cgroup 是 Linux 内核提供的一种机制，可以用来限制进程组（包括子进程）的资源使用，例如内存、CPU、磁盘 I/O 等。通过将 Java 进程放置在特定的 cgroup 中，你可以实现限制其使用的内存和 CPU 数。
+
+**小知识 - 常用 JVM 启动参数**
+**1、内存相关参数：**
+
+- -Xms: 设置 JVM 的初始堆内存大小。
+- -Xmx: 设置 JVM 的最大堆内存大小。
+- -Xss: 设置线程的栈大小。
+- -XX:MaxMetaspaceSize: 设置 Metaspace（元空间）的最大大小。
+- -XX:MaxDirectMemorySize: 设置直接内存（Direct Memory）的最大大小。
+
+**2、垃圾回收相关参数：**
+
+- -XX:+UseSerialGC: 使用串行垃圾回收器。
+- -XX:+UseParallelGC: 使用并行垃圾回收器。
+- -XX:+UseConcMarkSweepGC: 使用 CMS 垃圾回收器。
+- -XX:+UseG1GC: 使用 G1 垃圾回收器。
+
+**3、线程相关参数：**
+
+- -XX:ParallelGCThreads: 设置并行垃圾回收的线程数。
+- -XX:ConcGCThreads: 设置并发垃圾回收的线程数。
+- -XX:ThreadStackSize: 设置线程的栈大小。
+
+**4、JIT 编译器相关参数：**
+
+- -XX:TieredStopAtLevel: 设置 JIT 编译器停止编译的层次。
+
+**5、其他资源限制参数：**
+
+- -XX:MaxRAM: 设置 JVM 使用的最大内存。
+
+
+
+**3、限制代码 - 黑白名单**
+实现
+先定义一个黑白名单，比如哪些操作是禁止的，可以就是一个列表
+
+```java
+private static final List<String> blackList = Arrays.asList("Files", "read", "write", "exec");
+```
+
+此处使用 HuTool 工具库的字典树工具类：WordTree，不用自己写字典树！用 **更少的空间** 存储更多的敏感词汇，并且实现 **更高效** 的敏感词查找
+1、先初始化字典树，插入禁用词
+
+```java
+private static final WordTree WORD_TREE;
+static {
+    // 校验代码中是否包含黑名单中的命令 初始化字典树
+    WORD_TREE = new WordTree();
+    WORD_TREE.addWords(blackList);
+}
+```
+
+2、校验用户代码是否包含禁用词
+
+```java
+// 校验代码中是否包含黑名单中的命令
+FoundWord foundWord = WORD_TREE.matchWord(code);
+if (foundWord != null) {
+    System.out.println("包含禁止词：" + foundWord.getFoundWord());
+    return null;
+}
+```
+
+还可以使用字典树代替列表存储单词，。
+
+字典树的原理：
+
+![image-20231114113940203](assets/image-20231114113940203.png)
+
+字典树相关的应用可以写在简历上
+
+
+
+本方案缺点
+1、无法遍历所有的黑名单
+2、不同的编程语言，关键词都不一样，人工成本很大
+
+
+
+
+
+**4、限制权限 - Java 安全管理器**
+目标：限制用户对文件、内存、CPU、网络等资源的操作和访问。
+Java 安全管理器（Security Manager）是 Java 提供的保护 JVM、Java 安全的机制，可以实现更严格的资源和操作限制。
+
+编写安全管理器，只需要继承 Security Manager。
+
+1、所有权限放开
+
+```java
+/**
+ * 默认安全管理器
+ */
+public class DefaultSecurityManager extends SecurityManager {
+    /**
+     * 默认放开所有的权限
+     *
+     * @param perm
+     */
+    @Override
+    public void checkPermission(Permission perm) {
+        System.out.println("默认不做任何权限限制");
+    }
+}
+```
+
+开启
+
+```java
+System.setSecurityManager(new DefaultSecurityManager());
+```
+
+2、所有权限拒绝
+
+```java
+/**
+ * 禁用所有权限的安全管理器
+ */
+public class DenyAllSecurityManager extends SecurityManager {
+    /**
+     * 禁用所有的权限
+     *
+     * @param perm
+     */
+    @Override
+    public void checkPermission(Permission perm) {
+        throw new SecurityException("权限不足，"+perm.toString());
+    }
+}
+```
+
+3、限制读权限
+
+```java
+// 检查程序是否允许读文件
+@Override
+public void checkRead(String file) {
+    System.out.println(file);
+    if (file.contains("hutool")){
+        return;
+    }
+    throw new SecurityException("checkRead 权限不足，" + file);
+}
+```
+
+4、限制写文件权限
+
+```java
+// 检查程序是否允许写文件
+@Override
+public void checkWrite(String file) {
+    System.out.println(file);
+    throw new SecurityException("checkWrite 权限不足，" + file);
+    
+```
+
+5、限制写文件权限
+
+```java
+// 检查程序是否允许删除文件
+@Override
+public void checkDelete(String file) {
+    System.out.println(file);
+    throw new SecurityException("checkDelete 权限不足，" + file);
+}
+```
+
+6、限制执行文件权限
+
+```java
+// 检查程序是否允许执行文件
+@Override
+public void checkExec(String cmd) {
+    System.out.println(file);
+    throw new SecurityException("checkExec 权限不足，" + cmd);
+}
+```
+
+7、限制网络连接权限
+
+```java
+// // 检查程序是否允许连接网络
+@Override
+public void checkConnect(String host, int port) {
+    throw new SecurityException("checkConnect 权限不足，" + host + ":" + port);
+}
+```
+
+```java
+/**
+ * 我的安全管理器
+ */
+public class MySecurityManager extends SecurityManager {
+    // 默认放开所有的权限
+    @Override
+    public void checkPermission(Permission perm) {
+    }
+
+    // 检查程序是否允许执行文件
+    @Override
+    public void checkExec(String cmd) {
+        throw new SecurityException("checkExec 权限不足，" + cmd);
+    }
+
+    // 检查程序是否允许读文件
+    @Override
+    public void checkRead(String file) {
+        System.out.println(file);
+        if (file.contains("hutool")){
+            return;
+        }
+        throw new SecurityException("checkRead 权限不足，" + file);
+    }
+
+    // 检查程序是否允许写文件
+    @Override
+    public void checkWrite(String file) {
+        System.out.println(file);
+        throw new SecurityException("checkWrite 权限不足，" + file);
+    }
+
+    // 检查程序是否允许删除文件
+    @Override
+    public void checkDelete(String file) {
+        System.out.println(file);
+        throw new SecurityException("checkDelete 权限不足，" + file);
+    }
+
+    // // 检查程序是否允许连接网络
+    @Override
+    public void checkConnect(String host, int port) {
+        throw new SecurityException("checkConnect 权限不足，" + host + ":" + port);
+    }
+}
+```
+
+**结合项目运用**
+实际情况下，不应该在主类（开发者自己写的程序）中开启权限限制，只需要限制子程序的权限即可。
+启动子进程执行命令时，设置安全管理器，而不是在外层设置（否则会限制住测试用例的读写和子命令的执行）。
+
+**具体操作如下：**
+1、根据需要开发自定义的安全管理器（比如 MySecurityManager）
+
+2、复制 MySecurityManager 类到 resources/security 目录下，移除类的包名 
+
+```java
+import java.security.Permission;
+
+/**
+ * 我的安全管理器
+ */
+public class MySecurityManager extends SecurityManager {
+    // 默认放开所有的权限
+    @Override
+    public void checkPermission(Permission perm) {
+    }
+
+    // 检查程序是否允许执行文件
+    @Override
+    public void checkExec(String cmd) {
+        throw new SecurityException("checkExec 权限不足，" + cmd);
+    }
+
+    // 检查程序是否允许读文件
+    @Override
+    public void checkRead(String file) {
+        System.out.println(file);
+        if (file.contains("hutool")){
+            return;
+        }
+        throw new SecurityException("checkRead 权限不足，" + file);
+    }
+
+    // 检查程序是否允许写文件
+    @Override
+    public void checkWrite(String file) {
+        System.out.println(file);
+        // throw new SecurityException("checkWrite 权限不足，" + file);
+    }
+
+    // 检查程序是否允许删除文件
+    @Override
+    public void checkDelete(String file) {
+        System.out.println(file);
+        // throw new SecurityException("checkDelete 权限不足，" + file);
+    }
+
+    // // 检查程序是否允许连接网络
+    @Override
+    public void checkConnect(String host, int port) {
+        // throw new SecurityException("checkConnect 权限不足，" + host + ":" + port);
+    }
+}
+```
+
+3、手动输入命令编译 MySecurityManager 类，得到 class 文件
+
+4、在运行 java 程序时，指定安全管理器 class 文件的路径、安全管理器的名称。
+
+```java
+private static final String SECURITY_MANAGER_PATH = "E:\\Learn\\workspace\\luooj\\luooj-code-sandbox\\src\\main\\resources\\security";
+private static final String SECURITY_MANAGERR_CLASS_NAME="MySecurityManager";
+```
+
+命令如下：
+注意，windows 下要用分号间隔多个类路径！
+
+```java
+String.format("java -Xmx256m -Dfile.encoding=utf-8 -cp %s;%s -Djava.security.manager=%s Main %s", userCodeParentPath, SECURITY_MANAGER_PATH, SECURITY_MANAGERR_CLASS_NAME,input);
+```
+
+依次执行之前的所有测试用例，发现资源成功被限制。
+
+**安全管理器**
+
+1. 优点
+   1. 权限控制很灵活
+   2. 实现简单
+2. 缺点
+   1. 如果要做比较严格的权限控制，需要自己去判断哪些文件，包名需要允许读写，粒度太细，难以精细化控制
+   2. 安全管理器本身也是Java代码，也有可能存在漏洞。本质上还是程序层面的控制，没深入系统的层面
+
+
+
+
+
+**5、运行环境隔离**
+
+原理：操作系统层面上，把用户程序封装到沙箱里，与宿主机（服务器 / 我们的电脑 ）隔离开，使得用户程序无法影响宿主机
+
+实现方式：Docker容器技术（底层是用 cgroup、namespace等方式实现的），也可以直接使用 cgroup 实现
+
+
+
+
+
+
+
+
+
+
+
+#### Docker实现代码沙箱
+
+
+
+
+
 ## 前端
 
 ### 通用项目模板搭建
@@ -2785,7 +4358,7 @@ http://momentjs.cn/
 
 ![image-20231111205809882](assets/image-20231111205809882.png)
 
-![image-20231111210038502](assets/image-20231111210038502.png)
+![image-20231112211522409](assets/image-20231112211522409.png)
 
 ![image-20231111210140555](assets/image-20231111210140555.png)
 
@@ -2811,629 +4384,6 @@ http://momentjs.cn/
 
 
 
-### 判题模块预开发
-
-判题服务：调用代码沙箱，把代码和输入交给代码沙箱去执行
-
-代码沙箱：只负责接收代码和输入，返回编译运行的结果，不负责判题（可以作为独立的项目 / 服务，为其他需要运行代码的项目提供服务）
-
-![image-20231112093212793](assets/image-20231112093212793.png)
-
-**思考：**为什么代码沙箱要接收一组输入用例，输出一组运行结果
-
-每道题目有多个输入用例，如果每个输入用例单独调用一次代码沙箱，最终会多次调用接口，需要多次网络传输，程序要多次编译，要多次记录执行状态。（调用远程接口想办法尽量一次调用完成工作，减少不必要的多次调用，这是一种常见的性能优化方法）
-
-#### 代码沙箱
-
-**小知识 - Lombok Builder 注解**
-以前我们是 new 对象后，再逐行执行 set 方法的方式来给对象赋值的。
-还有另外一种可能更方便的方式 builder。
-
-1. 实体类加上 @Builder 等注解
-
-2. 可以使用链式的方式更方便地给对象赋值：
-
-**1、定义代码沙箱的接口，提高通用性**
-之后我们的项目代码只调用接口，不调用具体的实现类，这样在你使用其他的代码沙箱实现类时，就不用去修改名称了， 便于扩展。
-
->  代码沙箱的请求接口中，timeLimit 可加可不加，可自行扩展，即时中断程序。我们的项目是通过判题服务最后来判断代码沙箱的执行时间有没有超过预期
-
-```java
-public interface CodeSandBox {
-
-    /**
-     * 执行代码
-     * @param executeCodeRequest
-     * @return
-     */
-    ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest);
-}
-```
-
-```java
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class ExecuteCodeRequest {
-    private List<String> inputList;
-
-    private String code;
-
-    private String language;
-}
-```
-
-```java
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class ExecuteCodeResponse {
-
-    private List<String> outputList;
-
-    /**
-     * 执行信息
-     */
-    private String message;
-
-    /**
-     * 执行状态
-     */
-    private Integer status;
-
-    /**
-     * 判题信息
-     */
-    private QuestionSubmitJudgeInfo judgeInfo;
-}
-```
-
-**2、定义多种不同的代码沙箱实现**
-示例代码沙箱：仅为了跑通业务流程
-
-```java
-/**
- * 示例代码沙箱
- */
-public class ExampleCodeSandBox implements CodeSandBox {
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        System.out.println("示例代码沙箱");
-        return null;
-    }
-}
-```
-
-远程代码沙箱：实际调用接口的沙箱
-
-```java
-/**
- * 远程代码沙箱（真正调用了我们开发的代码沙箱接口，代码沙箱不在本地实现，而是使用docker）
- */
-public class RemoteCodeSandBox implements CodeSandBox {
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        System.out.println("远程代码沙箱");
-        return null;
-    }
-}
-```
-
-第三方代码沙箱：调用网上现成的代码沙箱，https://github.com/criyle/go-judge
-
-```
-/**
- * 第三方代码沙箱（调用网上现成的代码沙箱）
- */
-public class ThirdPartyCodeSandBox implements CodeSandBox {
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        System.out.println("第三方代码沙箱");
-        return null;
-    }
-}
-```
-
-**3、编写单元测试，验证单个代码沙箱的执行**
-
-```java
-@SpringBootTest
-class CodeSandBoxTest {
-
-    @Test
-    void executeCode() {
-        CodeSandBox codeSandBox = new ExampleCodeSandBox();
-        List<String> inputList= Arrays.asList("1 2","3 4");
-        String code = "int main(){}";
-        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
-        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
-                .inputList(inputList)
-                .code(code)
-                .language(language)
-                .build();
-        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(codeRequest);
-    }
-}
-```
-
-问题：我们把 new 某个沙箱的代码写死了，如果后面项目要改用其他沙箱，可能要改很多地方的代码。
-
-**4、使用工厂模式，根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类**
-此处使用静态工厂模式，实现比较简单，符合我们的需求。
-
-```java
-/**
- * 代码沙箱工厂（根据用户传入的字符串参数（沙箱类别），来生成对应的代码沙箱实现类）
- */
-public class CodeSandBoxFactory {
-    /**
-     * 创建代码沙箱示例
-     *
-     * @param type 代码沙箱类型
-     * @return
-     */
-    public static CodeSandBox newInstance(String type) {
-        switch (type) {
-            case "example":
-                return new ExampleCodeSandBox();
-            case "remote":
-                return new RemoteCodeSandBox();
-            case "thirdParty":
-                return new ThirdPartyCodeSandBox();
-            default:
-                return new ExampleCodeSandBox();
-        }
-    }
-}
-```
-
->  扩展思路：如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
-
-```java
-public static void main(String[] args) {
-    Scanner sc = new Scanner(System.in);
-    while (sc.hasNext()) {
-        String type = sc.nextLine();
-        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
-        List<String> inputList = Arrays.asList("1 2", "3 4");
-        String code = "int main(){}";
-        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
-        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
-                .inputList(inputList)
-                .code(code)
-                .language(language)
-                .build();
-        codeSandBox.executeCode(codeRequest);
-    }
-}
-```
-
-由此，我们可以根据字符串动态生成实例，提高了通用性：
-
-**5、参数配置化**
-
-把项目中的一些可以交给用户去自定义的选项或参数，写到配置文件中。这样开发者只需要改配置文件，而不需要去看你的项目代码，就能够自定义使用你项目的更多功能。
-
-在 Spring 的 Bean 中通过 @Value 注解读取：
-
-```java
-@SpringBootTest
-class CodeSandBoxTest {
-    @Value("${codesandbox.type:example}")
-    private String type;
-
-    @Test
-    void executeCodeByValue() {
-        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
-        List<String> inputList= Arrays.asList("1 2","3 4");
-        String code = "int main(){}";
-        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
-        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
-                .inputList(inputList)
-                .code(code)
-                .language(language)
-                .build();
-        codeSandBox.executeCode(codeRequest);
-    }
-}
-```
-
-```yml
-codesandbox:
-  type: remote
-```
-
-6、代码沙箱能力增强
-比如：我们需要在调用代码沙箱前，输出请求参数日志；在代码沙箱调用后，输出响应结果日志，便于管理员去分析。
-
-每个代码沙箱类都写一遍 log.info？难道每次调用代码沙箱前后都执行 log？
-使用代理模式，提供一个 Proxy，来增强代码沙箱的能力（代理模式的作用就是增强能力）
-
-```java
-@Slf4j
-public class CodeSandBoxProxy implements CodeSandBox {
-
-    private final CodeSandBox codeSandBox;
-
-    public CodeSandBoxProxy(CodeSandBox codeSandBox) {
-        this.codeSandBox = codeSandBox;
-    }
-
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        log.info("代码沙箱请求信息，" + executeCodeRequest);
-        ExecuteCodeResponse executeCodeResponse = codeSandBox.executeCode(executeCodeRequest);
-        log.info("代码沙箱响应信息，" + executeCodeResponse);
-        return executeCodeResponse;
-    }
-}
-```
-
-```java
-@SpringBootTest
-class CodeSandBoxTest {
-    @Value("${codesandbox.type:example}")
-    private String type;
-
-    @Test
-    void executeCodeByValue_Proxy() {
-        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
-        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
-        List<String> inputList= Arrays.asList("1 2","3 4");
-        String code = "int main(){}";
-        String language = QuestionSubmitLanguageEnum.JAVA.getValue();
-        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
-                .inputList(inputList)
-                .code(code)
-                .language(language)
-                .build();
-        codeSandBoxProxy.executeCode(codeRequest);
-    }
-}
-```
-
-
-做一些额外的功能
-
-`代理模式的实现原理：`
-
-1. 实现被代理的接口
-2. 通过构造函数接受一个被代理的接口的实现类
-3. 调用被代理的接口实现类，在调用前后增加对应的操作
-
-
-
-**7、实现示例的代码沙箱**
-
-```java
-/**
- * 示例代码沙箱
- */
-public class ExampleCodeSandBox implements CodeSandBox {
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        List<String> inputList = executeCodeRequest.getInputList();
-
-        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
-        executeCodeResponse.setOutputList(inputList);
-        executeCodeResponse.setMessage("测试执行成功");
-        executeCodeResponse.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
-        QuestionSubmitJudgeInfo judgeInfo = new QuestionSubmitJudgeInfo();
-        judgeInfo.setMessage(JudgeInfoMessagenum.ACCEPTED.getText());
-        judgeInfo.setMemory(1000l);
-        judgeInfo.setTime(1000l);
-        executeCodeResponse.setJudgeInfo(judgeInfo);
-
-        return executeCodeResponse;
-    }
-}
-```
-
-#### 判题服务开发
-1、**定义单独的 judgeService 类，而不是把所有判题相关的代码写到 questionSubmitService 里，有利于后续的模块抽离、微服务改造。**、
-
-```java
-/**
- * 怕媒体服务
- */
-public interface JudgeService {
-
-    /**
-     * 判题
-     * @param questionSubmitId
-     * @return
-     */
-    QuestionSubmitVO doJudge(long questionSubmitId);
-}
-```
-
-判题服务业务流程
-1、传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
-2、如果题目提交状态不为等待中，就不用重复执行了
-3、更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
-4、调用沙箱，获取到执行结果
-5、根据沙箱的执行结果，设置题目的判题状态和信息
-
-判断逻辑
-
-1. 先判断沙箱执行的结果输出数量是否和预期输出数量相等
-2. 依次判断每一项输出和预期输出是否相等
-3. 判题题目的限制是否符合要求
-4. 可能还有其他的异常情况
-
-```java
-@Service
-public class JudgeServiceImpl implements JudgeService {
-    @Resource
-    private QuestionService questionService;
-
-    @Resource
-    private QuestionSubmitService questionSubmitService;
-
-    @Resource
-    private JudgeManager judgeManager;
-
-    @Value("${codesandbox.type:example}")
-    private String type;
-
-    @Override
-    public QuestionSubmitVO doJudge(long questionSubmitId) {
-        // 1 传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
-        QuestionSubmit questionSubmit = questionSubmitService.getById(questionSubmitId);
-        if (questionSubmit == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "提交记录不存在");
-        }
-        Long questionId = questionSubmit.getQuestionId();
-        Question question = questionService.getById(questionId);
-        if (question == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "题目不存");
-        }
-        // 2 如果题目提交状态不为等待中，就不用重复执行了
-        if (!questionSubmit.getStatus().equals(QuestionSubmitStatusEnum.WAITING.getValue())) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "已在判题");
-        }
-        // 3 更改判题（题目提交）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
-        QuestionSubmit questionSubmitUpdate = new QuestionSubmit();
-        questionSubmitUpdate.setId(questionSubmitId);
-        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.RUNNING.getValue());
-        boolean update = questionSubmitService.updateById(questionSubmitUpdate);
-        if (!update) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
-        }
-        // 4、调用沙箱，获取到执行结果
-        String code = questionSubmit.getCode();
-        // 获取输入用例
-        List<QuestionJudgeCase> judgeCaseList = JSONUtil.toList(question.getJudgeCase(), QuestionJudgeCase.class);
-        List<String> inputList = judgeCaseList.stream().map(QuestionJudgeCase::getInput).collect(Collectors.toList());
-
-        String language = questionSubmit.getLanguage();
-        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
-        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
-        ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
-                .inputList(inputList)
-                .code(code)
-                .language(language)
-                .build();
-        ExecuteCodeResponse executeCodeResponse = codeSandBoxProxy.executeCode(codeRequest);
-        List<String> outputList = executeCodeResponse.getOutputList();
-        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
-
-        JudgeContext judgeContext = new JudgeContext();
-        judgeContext.setOutputList(outputList);
-        judgeContext.setInputList(inputList);
-        judgeContext.setJudgeCaseList(judgeCaseList);
-        judgeContext.setQuestion(question);
-        judgeContext.setJudgeInfo(executeCodeResponse.getJudgeInfo());
-        judgeContext.setQuestionSubmit(questionSubmit);
-
-        QuestionSubmitJudgeInfo judgeInfo = judgeManager.doJudge(judgeContext);
-        // 修改提交记录的判题状态和判题信息
-        questionSubmitUpdate = new QuestionSubmit();
-        questionSubmitUpdate.setId(questionSubmitId);
-        questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
-        questionSubmitUpdate.setJudgeInfo(JSONUtil.toJsonStr(judgeInfo));
-        update = questionSubmitService.updateById(questionSubmitUpdate);
-        if (!update) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
-        }
-        return QuestionSubmitVO.objToVo(questionSubmitService.getById(questionSubmitId));
-    }
-}
-```
-
-**2、 策略模式优化**
-我们的判题策略可能会有很多种，比如：我们的代码沙箱本身执行程序需要消耗时间，这个时间可能不同的编程语言是不同的，比如沙箱执行 Java 要额外花 10 秒。
-
-我们可以采用策略模式，针对不同的情况，定义独立的策略，便于分别修改策略和维护。而不是把所有的判题逻辑、if ... else ... 代码全部混在一起写。
-
-实现步骤如下：
-1、定义判题策略接口，让代码更加通用化
-
-```java
-/**
- * 判题策略
- */
-public interface JudgeStrategy {
-    /**
-     * 执行判题
-     * @param judgeContext
-     * @return
-     */
-    QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext);
-}
-```
-
-2、定义判题上下文对象，用于定义在策略中传递的参数（可以理解为一种 DTO）
-
-```java
-@Data
-public class JudgeContext {
-
-    private List<String> inputList;
-    
-    private List<String> outputList;
-    
-    private List<QuestionJudgeCase> judgeCaseList;
-    
-    private Question question;
-    
-    private QuestionSubmitJudgeInfo judgeInfo;
-    
-    private QuestionSubmit questionSubmit;
-}
-```
-
-3、实现默认判题策略，先把 judgeService 中的代码搬运过来
-
-```java
-/**
- * 默认判题策略
- */
-public class DefaultJudgeStrategy implements JudgeStrategy {
-    /**
-     * 执行判题
-     * @param judgeContext
-     * @return
-     */
-    @Override
-    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
-        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
-        List<String> inputList = judgeContext.getInputList();
-        List<String> outputList = judgeContext.getOutputList();
-        Question question = judgeContext.getQuestion();
-        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
-
-        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
-        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
-        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
-        if (outputList.size() != inputList.size()) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
-        }
-        // 5.2 依次判断每一项输出和预期输出是否相等
-        for (int i = 0; i < judgeCaseList.size(); i++) {
-            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
-            if (!judgeCase.getOutput().equals(outputList.get(i))) {
-                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
-            }
-        }
-        // 5.3 判题题目的限制是否符合要求
-        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
-        Long timeLimit = questionJudgeCconfig.getTimeLimit();
-        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
-
-        Long memory = judgeInfo.getMemory();
-        Long time = judgeInfo.getTime();
-        if (memory > memoryLimit) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
-        }
-        if (time > timeLimit) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
-        }
-        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
-        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
-        judgeInfoResponse.setMemory(memory);
-        judgeInfoResponse.setTime(time);
-        return judgeInfoResponse;
-    }
-}
-```
-
-4、新增Java代码判题策略
-
-```java
-/**
- * Java判题策略
- */
-public class JavaJudgeStrategy implements JudgeStrategy {
-    /**
-     * 执行判题
-     *
-     * @param judgeContext
-     * @return
-     */
-    @Override
-    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
-        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
-        List<String> inputList = judgeContext.getInputList();
-        List<String> outputList = judgeContext.getOutputList();
-        Question question = judgeContext.getQuestion();
-        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
-
-        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
-        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
-        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
-        if (outputList.size() != inputList.size()) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
-        }
-        // 5.2 依次判断每一项输出和预期输出是否相等
-        for (int i = 0; i < judgeCaseList.size(); i++) {
-            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
-            if (!judgeCase.getOutput().equals(outputList.get(i))) {
-                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
-            }
-        }
-        // 5.3 判题题目的限制是否符合要求
-
-        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
-        Long timeLimit = questionJudgeCconfig.getTimeLimit();
-        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
-
-        Long memory = judgeInfo.getMemory();
-        Long time = judgeInfo.getTime();
-        if (memory > memoryLimit) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
-        }
-        // java程序需要额外执行10秒钟
-        long JAVA_EXTRA_TIME_COST = 10000L;
-        if (time - JAVA_EXTRA_TIME_COST > timeLimit) {
-            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
-        }
-        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
-        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
-        judgeInfoResponse.setMemory(memory);
-        judgeInfoResponse.setTime(time);
-        return judgeInfoResponse;
-    }
-}
-```
-
-5、通过 if ... else ... 的方式选择使用哪种策略
-
-但是，如果选择某种判题策略的过程都写在调用判题服务的代码中，虽则判题策略越来越多，代码会越来越复杂，会有大量 if ... else ...，所以建议单独编写一个判断策略的类。
-
-6、定义 JudgeManager，目的是尽量简化对判题功能的调用，让调用方写最少的代码、调用最简单。通过JudgeContext上下文对象获取
-
-编程语言，根据编程语言选择判题策略，判题策略根据上下文对象执行最终的判题。JudgeServiceImpl只需要调用JudegManager的doJudge方法即可完成判题
-
-```java
-/**
- * 判题管理（简化代码）
- */
-@Service
-public class JudgeManager {
-
-    public QuestionSubmitJudgeInfo doJudge(JudgeContext context) {
-        QuestionSubmit questionSubmit = context.getQuestionSubmit();
-        String language = questionSubmit.getLanguage();
-        JudgeStrategy judgeStrategy = new DefaultJudgeStrategy();
-        if ("java".equals(language)) {
-            judgeStrategy = new JavaJudgeStrategy();
-        }
-        return judgeStrategy.doJudge(context);
-    }
-}
-```
-
-![image-20231112145329849](assets/image-20231112145329849.png)
-
-![image-20231112145400878](assets/image-20231112145400878.png)
-
-
-
-
-
 
 
 ## 扩展思路
@@ -3449,6 +4399,7 @@ public class JudgeManager {
 - 优化题目管理页
 - 增加一个查看代码沙箱状态的接口
 - 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
+- 自行实现C++的代码沙箱
 
 ## 踩坑
 

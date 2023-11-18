@@ -78,12 +78,12 @@ OJ （Online Judge 在线判题系统）
   - 修改题目（管理员）
   - 搜索题目（管理员&用户）
   - 在线做题
-  - 提交代码
+  - 题目提交
 - 用户模块
   - 注册
   - 登录
 - 判题模块
-  - 提交判题
+  - 执行判题
   - 错误处理（内存溢出，超时，安全）
   - 代码沙箱（自主实现） 
   - 开放接口（提供一个独立的新服务）
@@ -133,6 +133,13 @@ OJ （Online Judge 在线判题系统）
 - 代码沙箱
   - Java原生实现代码沙箱
   - Docker实现代码沙箱
+- 系统优化
+  - 模板方法优化代码沙箱
+  - 代码沙箱提供开放 API
+  - 跑通单体项目流程
+  - 单体项目改造为微服务
+  - 消息队列解耦
+
 
 
 **前端**
@@ -4135,9 +4142,1754 @@ hostConfig.withSecurityOpts(Arrays.asList("seccomp=" + profileConfig));
 
 
 
+### 系统优化 
+
+
+#### 模板方法优化代码沙箱
+**模板方法：**定义一套通用的执行流程，让子类负责每个步骤的具体实现
+
+**适用场景：**适用于有规范的流程，且执行流程可以复用
+
+**作用：**大幅节省重复代码量，便于项目扩展、更好维护
+
+
+##### 抽象出具体的流程
+定义一个模板方法抽象类。
+
+先复制具体的实现类，把代码从完整的方法抽离成一个一个子方法
+
+```java
+@Slf4j
+public abstract class JavaCodeSandBoxTemplate implements CodeSandBox {
+    private static final String GLOBAL_CODE_DIR_NAME = "tempCode";
+
+    private static final String GLOBAL_JAVA_CLASS_NAME = "Main.java";
+
+    private static final long TIMEOUT = 5000L;
+
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        List<String> inputList = executeCodeRequest.getInputList();
+        String code = executeCodeRequest.getCode();
+        String language = executeCodeRequest.getLanguage();
+        // 1. 把用户的代码保存为文件
+        File userCodeFile = saveCodeFile(code);
+
+        // 2. 编译代码，得到 class 文件
+        ExecuteMessage compileCodeFileExecuteMessage = compileCodeFile(userCodeFile);
+        System.out.println(compileCodeFileExecuteMessage);
+
+        // 3. 执行代码，得到输出结果
+        List<ExecuteMessage> executeMessageList = runCodeFile(userCodeFile, inputList);
+        // 4. 收集整理输出结果
+        ExecuteCodeResponse executeCodeResponse = getOutputResponse(executeMessageList);
+
+        // 5. 文件清理，释放空间
+        boolean b = deleteFile(userCodeFile);
+        if (!b) {
+            log.error("deleteFile error userCodeFilePath={}", userCodeFile.getAbsolutePath());
+        }
+        return executeCodeResponse;
+    }
+
+
+    /**
+     * 1. 把用户的代码保存为文件
+     *
+     * @param code
+     * @return
+     */
+    public File saveCodeFile(String code) {
+
+        String userDir = System.getProperty("user.dir");
+        String globalCodePathName = userDir + File.separator + GLOBAL_CODE_DIR_NAME;
+        // 判断全局代码目录是否存在，没有则新建
+        if (!FileUtil.exist(globalCodePathName)) {
+            FileUtil.mkdir(globalCodePathName);
+        }
+        // 把用户的代码隔离存放
+        String userCodeParentPath = globalCodePathName + File.separator + UUID.randomUUID();
+        String userCodePath = userCodeParentPath + File.separator + GLOBAL_JAVA_CLASS_NAME;
+        File userCodeFile = FileUtil.writeString(code, userCodePath, StandardCharsets.UTF_8);
+        return userCodeFile;
+    }
+
+    /**
+     * 2. 编译代码
+     *
+     * @param userCodeFile
+     * @return
+     */
+    public ExecuteMessage compileCodeFile(File userCodeFile) {
+        String complieCmd = String.format("javac -encoding utf-8 %s", userCodeFile.getAbsolutePath());
+        try {
+            Process compileProcess = Runtime.getRuntime().exec(complieCmd);
+            ExecuteMessage executeMessage = ProcessUtils.runProcessAndGetMessage(compileProcess, "编译");
+            if (executeMessage.getExitValue() != 0) {
+                throw new RuntimeException("编译错误");
+            }
+            return executeMessage;
+        } catch (Exception e) {
+            // return getErrorResponse(e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * 3. 执行字节码文件，获得执行结果列表
+     *
+     * @param inputList
+     * @return
+     */
+    public List<ExecuteMessage> runCodeFile(File userCodeFile, List<String> inputList) {
+        String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+        List<ExecuteMessage> executeMessageList = new ArrayList<>();
+        for (String input : inputList) {
+            String runCmd = String.format("java -Xmx256m -Dfile.encoding=utf-8 -cp %s Main %s", userCodeParentPath, input);
+            try {
+                Process runProcess = Runtime.getRuntime().exec(runCmd);
+                // 超时控制
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(TIMEOUT);
+                        System.out.println("超时了，中断");
+                        runProcess.destroy();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }).start();
+                ExecuteMessage executeMessage = ProcessUtils.runProcessAndGetMessage(runProcess, "运行");
+                System.out.println(executeMessage);
+                executeMessageList.add(executeMessage);
+            } catch (Exception e) {
+                throw new RuntimeException("程序执行异常，" + e);
+            }
+        }
+        return executeMessageList;
+    }
+
+    /**
+     * 4. 获取输出结果
+     *
+     * @param executeMessageList
+     * @return
+     */
+    public ExecuteCodeResponse getOutputResponse(List<ExecuteMessage> executeMessageList) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        List<String> outputList = new ArrayList<>();
+        // 一组输入用例中某个用例执行时长的最大值，便于判断是否超时
+        long maxTime = 0;
+        for (ExecuteMessage executeMessage : executeMessageList) {
+            String errorMessage = executeMessage.getErrorMessage();
+            if (StrUtil.isNotBlank(errorMessage)) {
+                executeCodeResponse.setMessage(errorMessage);
+                // 执行中存在错误
+                executeCodeResponse.setStatus(3);
+                break;
+            }
+            outputList.add((executeMessage.getMessage()));
+            Long time = executeMessage.getTime();
+            if (time != null) {
+                maxTime = Math.max(maxTime, time);
+            }
+        }
+        executeCodeResponse.setOutputList(outputList);
+        // 表示正常运行完成
+        if (outputList.size() == executeMessageList.size()) {
+            executeCodeResponse.setStatus(2);
+        }
+        QuestionSubmitJudgeInfo questionSubmitJudgeInfo = new QuestionSubmitJudgeInfo();
+        questionSubmitJudgeInfo.setTime(maxTime);
+        executeCodeResponse.setJudgeInfo(questionSubmitJudgeInfo);
+        return executeCodeResponse;
+    }
+
+    /**
+     * 5. 删除文件
+     *
+     * @param userCodeFile
+     * @return
+     */
+    public boolean deleteFile(File userCodeFile) {
+        if (userCodeFile.getParentFile() != null) {
+            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+            boolean del = FileUtil.del(userCodeParentPath);
+            System.out.println("删除" + (del ? "成功" : "失败"));
+            return del;
+        }
+        return true;
+    }
+
+
+    /**
+     * 6. 错误处理，提升程序健壮性
+     */
+    private ExecuteCodeResponse getErrorResponse(Throwable e) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(new ArrayList<>());
+        executeCodeResponse.setMessage(e.getMessage());
+        executeCodeResponse.setStatus(3);
+        executeCodeResponse.setJudgeInfo(new QuestionSubmitJudgeInfo());
+        return executeCodeResponse;
+    }
+}
+```
 
 
 
+##### 定义子类的具体实现
+**Java 原生代码沙箱实现，直接复用模板方法定义好的方法实现**
+
+```java
+/**
+ * Java原生代码沙箱
+ */
+@Component
+public class JavaNativeCodeSandBox extends JavaCodeSandBoxTemplate {
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        return super.executeCode(executeCodeRequest);
+    }
+}
+```
+
+**Docker 代码沙箱实现，需要自行重写 RunFile**
+
+```java
+/**
+ * Java原生代码沙箱
+ */
+@Component
+public class JavaDockerCodeSandBox extends JavaCodeSandBoxTemplate {
+
+    private static final long TIMEOUT = 5000L;
+
+    private static final boolean FIRST_INIT = false;
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        return super.executeCode(executeCodeRequest);
+    }
+
+    /**
+     * * 床创建容器，执行代码，得到结果
+     * * @param userCodeFile
+     *
+     * @param inputList
+     * @return
+     */
+    @Override
+    public List<ExecuteMessage> runCodeFile(File userCodeFile, List<String> inputList) {
+        String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+        // 1.拉取镜像
+        DockerClient dockerClient = DockerClientBuilder.getInstance().build();
+        String image = "openjdk:8-alpine";
+        if (FIRST_INIT) {
+            // 拉取jdk镜像
+            PullImageCmd pullImageCmd = dockerClient.pullImageCmd(image);
+            // 回调函数
+            PullImageResultCallback pullImageResultCallback = new PullImageResultCallback() {
+                @Override
+                public void onNext(PullResponseItem item) {
+                    System.out.println("下载镜像状态：" + item.getStatus());
+                    super.onNext(item);
+                }
+            };
+            // 执行拉取镜像命令
+            try {
+                pullImageCmd
+                        .exec(pullImageResultCallback)
+                        .awaitCompletion();
+            } catch (InterruptedException e) {
+                System.out.println("拉取镜像异常");
+                throw new RuntimeException(e);
+            }
+            System.out.println("下载完成");
+        }
+
+        // 2.创建容器
+        CreateContainerCmd containerCmd = dockerClient.createContainerCmd(image);
+        HostConfig hostConfig = new HostConfig();
+        // 把本地存放字节码文件的目录映射到容器的内的/app目录
+        hostConfig.setBinds(new Bind(userCodeParentPath, new Volume("/app")));
+        // 限制最大内存
+        hostConfig.withMemory(100 * 1000 * 1000L);
+        // 不让内存往硬盘写
+        hostConfig.withMemorySwap(0L);
+        hostConfig.withCpuCount(1L);
+//        hostConfig.withSecurityOpts(Arrays.asList("seccomp=安全管理配置字符串"));
+        CreateContainerResponse createContainerResponse = containerCmd
+                .withReadonlyRootfs(true)
+                .withNetworkDisabled(true)
+                .withHostConfig(hostConfig)
+                .withAttachStdin(true)
+                .withAttachStdout(true)
+                .withAttachStderr(true)
+                .withTty(true)
+                .exec();
+        System.out.println(createContainerResponse);
+        String containerId = createContainerResponse.getId();
+
+        // 3.启动容器
+        StartContainerCmd startContainerCmd = dockerClient.startContainerCmd(containerId);
+        startContainerCmd.exec();
+        // docker exec focused_jackson java -cp /app Main 1 3
+        // 4.执行命令并获取结果
+        List<ExecuteMessage> executeMessageList = new ArrayList<>();
+        for (String input : inputList) {
+            // 为每个输入用例的执行计时
+            StopWatch stopWatch = new StopWatch();
+            // 构造命令
+            String[] split = input.split(" ");
+            String[] cmdArray = ArrayUtil.append(new String[]{"java", "-cp", "/app", "Main"}, split);
+            ExecCreateCmdResponse execCreateCmdResponse = dockerClient
+                    .execCreateCmd(containerId)
+                    .withCmd(cmdArray)
+                    .withAttachStderr(true)
+                    .withAttachStdin(true)
+                    .withAttachStdout(true)
+                    .exec();
+            System.out.println("创建执行命令：" + cmdArray);
+
+
+            ExecuteMessage executeMessage = new ExecuteMessage();
+            final String[] message = {null};
+            final String[] errorMessage = {null};
+            // 每个输入用例的执行时间
+            long time = 0L;
+            // 判断是否超时
+            boolean[] isTimeOut = new boolean[]{true};
+            String execId = execCreateCmdResponse.getId();
+            // 执行命令时的回调函数
+            ExecStartResultCallback execStartResultCallback = new ExecStartResultCallback() {
+                @Override
+                public void onNext(Frame frame) {
+                    StreamType streamType = frame.getStreamType();
+                    if (StreamType.STDERR.equals(streamType)) {
+                        errorMessage[0] = new String(frame.getPayload());
+                        System.out.println("输出错误结果" + errorMessage[0]);
+                    } else {
+                        message[0] = new String(frame.getPayload());
+                        System.out.println("输出结果" + message[0]);
+                    }
+                    super.onNext(frame);
+                }
+
+                @Override
+                public void onComplete() {
+                    isTimeOut[0] = false;
+                    super.onComplete();
+                }
+            };
+
+            // 获取占用的内存
+            final long[] maxMemory = {0L};
+            StatsCmd statsCmd = dockerClient.statsCmd(containerId);
+            ResultCallback<Statistics> statisticsResultCallback = statsCmd.exec(new ResultCallback<Statistics>() {
+                @Override
+                public void onNext(Statistics statistics) {
+                    System.out.println("内存占用：" + statistics.getMemoryStats().getUsage());
+                    maxMemory[0] = Math.max(maxMemory[0], statistics.getMemoryStats().getUsage().longValue());
+                }
+
+                @Override
+                public void onStart(Closeable closeable) {
+
+                }
+
+                @Override
+                public void onError(Throwable throwable) {
+
+                }
+
+                @Override
+                public void onComplete() {
+
+                }
+
+                @Override
+                public void close() throws IOException {
+
+                }
+            });
+            statsCmd.exec(statisticsResultCallback);
+
+            // 执行
+            try {
+                stopWatch.start();
+                dockerClient
+                        .execStartCmd(execId)
+                        .exec(execStartResultCallback)
+                        .awaitCompletion(TIMEOUT, TimeUnit.MILLISECONDS);
+                stopWatch.stop();
+                time = stopWatch.getLastTaskTimeMillis();
+                // 关闭内存统计
+                statsCmd.close();
+            } catch (InterruptedException e) {
+                System.out.println("程序执行异常");
+                throw new RuntimeException(e);
+            }
+            // 封装执行结果
+            executeMessage.setMessage(message[0]);
+            executeMessage.setErrorMessage(errorMessage[0]);
+            executeMessage.setTime(time);
+            executeMessage.setMemory(maxMemory[0]);
+            executeMessageList.add(executeMessage);
+        }
+        return executeMessageList;
+    }
+
+}
+```
+
+#### 代码沙箱提供开放 API
+##### 在 controller 中暴露 CodeSandbox 定义的接口
+
+```java
+@RestController
+public class MainController {
+    // 定义鉴权请求头和密钥
+    @Resource
+    private JavaNativeCodeSandBox javaNativeCodeSandBox;
+
+    /**
+     * 执行代码
+     *
+     * @param executeCodeRequest
+     * @return
+     */
+    @PostMapping("/executeCode")
+    ExecuteCodeResponse executeCode(@RequestBody ExecuteCodeRequest executeCodeRequest, HttpServletRequest request, HttpServletResponse response) {
+        if (executeCodeRequest == null) {
+            throw new RuntimeException("请求参数为空");
+        }
+        return javaNativeCodeSandBox.executeCode(executeCodeRequest);
+    }
+}
+```
+
+##### 调用安全性
+如果将服务不做任何的权限校验，直接发到公网，是不安全的。
+
+**1、调用方与服务提供方之间约定一个字符串 （最好加密）**
+
+1. 优点：实现最简单，比较适合内部系统之间相互调用（相对可信的环境内部调用）
+2. 缺点：不够灵活，如果 key 泄露或变更，需要重启代码
+
+代码沙箱服务，先定义约定的字符串，改造请求，从请求头中获取认证信息，并校验
+
+```java
+@RestController
+public class MainController {
+    // 定义鉴权请求头和密钥
+    private static final String AUTH_REQUEST_HEADER = "auth";
+    private static final String AUTH_REQUEST_SECRET = "secretKey";
+    @Resource
+    private JavaNativeCodeSandBox javaNativeCodeSandBox;
+
+    /**
+     * 执行代码
+     *
+     * @param executeCodeRequest
+     * @return
+     */
+    @PostMapping("/executeCode")
+    ExecuteCodeResponse executeCode(@RequestBody ExecuteCodeRequest executeCodeRequest, HttpServletRequest request, HttpServletResponse response) {
+        String authHeader = request.getHeader(AUTH_REQUEST_HEADER);
+        if (!AUTH_REQUEST_SECRET.equals(authHeader)) {
+            response.setStatus(403);
+            return null;
+        }
+        if (executeCodeRequest == null) {
+            throw new RuntimeException("请求参数为空");
+        }
+        return javaNativeCodeSandBox.executeCode(executeCodeRequest);
+    }
+}
+```
+
+调用方，在调用时补充请求头
+
+```java
+public class RemoteCodeSandBox implements CodeSandBox {
+    // 定义鉴权请求头和密钥
+    private static final String AUTH_REQUEST_HEADER = "auth";
+    private static final String AUTH_REQUEST_SECRET = "secretKey";
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        System.out.println("远程代码沙箱");
+        String jsonStr = JSONUtil.toJsonStr(executeCodeRequest);
+        String url = "http://localhost:5050/executeCode";
+        String responseStr = HttpUtil.createPost(url)
+                .header(AUTH_REQUEST_HEADER,AUTH_REQUEST_SECRET)
+                .body(jsonStr)
+                .execute()
+                .body();
+        if (StringUtils.isBlank(responseStr)) {
+            throw new BusinessException(ErrorCode.API_REQUEST_ERROR, "executeCode remoteSandBox error message = " + responseStr);
+        }
+        System.out.println(responseStr);
+
+        return JSONUtil.toBean(responseStr, ExecuteCodeResponse.class);
+    }
+}
+```
+
+**2、API 签名认证**
+给允许调用的人员分配 accessKey、secretKey，然后校验这两组 key 是否匹配
+
+#### 跑通单体项目流程
+1、移动 questionSubmitController 代码到 questionController 中
+
+2、由于后端改了接口地址，前端需要重新生成接口调用代码，还需要更改前端某些页面调用的接口
+
+3、后端调试
+
+扩展：
+
+#### 单体项目改造为微服务
+##### 什么是微服务
+**服务：**提供某类功能的代码
+
+**微服务：**专注于提供某类特定功能的代码，而不是把所有的代码全部放到同一个项目里。会把整个大的项目按照一定的功能、逻辑进行拆分，拆分为多个子模块，每个子模块可以独立运行、独立负责一类功能，子模块之间相互调用、互不影响。
+
+一个公司：一个人干活，这个人 icu 了，公司直接倒闭
+
+一个公司有多个不同类的岗位，多个人干活，一个组跨了还有其他组可以正常工作，不会说公司直接倒闭。各组之间可能需要交互，来完成大的目标。
+
+**微服务的几个重要的实现因素：**服务拆分、服务调用、服务管理
+
+
+
+
+
+##### 微服务实现技术
+
+Spring Cloud
+
+**Spring Cloud Alibaba**（**采用**）
+
+Dubbo（DubboX）
+
+RPC（GRPC、TRPC）
+
+**本质：**是通过 HTTP、或者其他的网络协议进行通讯来实现的。
+
+
+
+
+
+##### Spring Cloud Alibaba
+https://github.com/alibaba/spring-cloud-alibaba
+**中文文档：**https://sca.aliyun.com/zh-cn/**（推荐学习）**
+
+**本质：**是在 Spring Cloud 的基础上，进行了增强，补充了一些额外的能力，根据阿里多年的业务沉淀做了一些定制化的开发
+
+1. Spring Cloud Gateway：网关
+
+2. Nacos：服务注册和配置中心
+
+3. Sentinel：熔断限流
+
+4. Seata：分布式事务
+
+5. RocketMQ：消息队列，削峰填谷
+
+6. Docker：使用Docker进行容器化部署
+
+7. Kubernetes：使用k8s进行容器化部署
+
+![image-20231117154909749](assets/image-20231117154909749.png)
+
+
+**选择对应的版本：**https://sca.aliyun.com/zh-cn/docs/2021.0.5.0/overview/version-explain
+此处选择 2021.0.5.0：
+![image-20231117155019543](assets/image-20231117155019543.png)
+
+
+**微服务请求流程：**
+![image-20231117155301216](assets/image-20231117155301216.png)
+
+
+
+> 扩展：可以了解另一个分布式微服务框架 https://github.com/Nepxion/Discovery
+
+
+
+
+
+##### 改造前思考
+
+从业务需求出发，思考单机和分布式的区别。
+
+**用户登录功能：**需要改造为分布式登录（微服务网关中改造）
+
+**其他内容：**
+
+- 有没有用到单机的锁？改造为分布式锁
+- 有没有用到本地缓存？改造为分布式缓存（Redis）
+- 需不需要用到分布式事务？比如操作多个库
+
+
+
+###### 微服务的划分
+从业务出发，想一下哪些功能 / 职责是一起的？
+
+**依赖服务：**
+
+- 注册中心：Nacos
+- 微服务网关（luooj-backend-gateway：8504 端口）：Gateway 聚合所有的接口，统一接受处理前端的请求
+
+**公共模块：**
+
+- common 公共模块（luooj-backend-common）：全局异常处理器、请求响应封装类、公用的工具类等
+- model 模型模块（luooj-backend-model）：很多服务公用的实体类
+- 公用接口模块（luooj-backend-service-client）：只存放接口，不存放实现（多个服务之间要共享）
+
+**业务功能：**
+
+1. 用户服务（luooj-backend-user-service：8501 端口）
+   1. 注册（后端已实现，前端已实现）
+   2. 登录（后端已实现，前端已实现）
+   3. 用户管理
+2. 题目服务（luooj-backend-question-service：8502 端口）
+   1. 创建题目（管理员）
+   2. 删除题目（管理员）
+   3. 修改题目（管理员）
+   4. 搜索题目（用户&管理员）
+   5. 在线做题（用户&管理员）
+   6. 题目提交（用户&管理员）
+3. 判题服务（luooj-backend-judge-service，8503 端口，较重的操作）
+   1. 执行判题
+   2. 错误处理（内存溢出、安全性、超时）
+   3. 自主实现 代码沙箱（安全沙箱）
+   4. 开放接口（提供一个独立的新服务）
+
+>  代码沙箱服务本身就是独立的，不用纳入 Spring Cloud 的管理
+
+
+
+###### 路由划分
+
+用 springboot 的 context-path 统一修改每个服务提供者的接口请求前缀，比如：
+
+**用户服务：**
+
+- /api/user
+- /api/user/inner（内部调用，网关层面要做限制）
+
+**题目服务：**
+
+- /api/question（包括题目提交）
+- /api/question/inner（内部调用，网关层面要做限制）
+
+**判题服务：**
+
+- /api/judge
+- /api/judge/inner（内部调用，网关层面要做限制）
+
+
+
+##### Nacos 注册中心
+
+**中文教程：**https://sca.aliyun.com/zh-cn/docs/2021.0.5.0/user-guide/nacos/overview
+**Nacos 官网教程：**https://nacos.io/zh-cn/docs/quick-start.html
+
+
+
+###### 下载Nacos
+
+https://github.com/alibaba/nacos/releases/tag/2.2.0
+
+一定要选择 2.2.0 版本！！！
+
+安装好后，进入 bin 目录启动
+
+```sh
+startup.cmd -m standalone
+```
+
+
+
+###### 使用用脚手架创建项目
+
+Spring Cloud 有相当多的依赖，参差不齐，不建议随意找一套配置、或者自己写。
+
+脚手架：https://start.aliyun.com/ 给项目增加全局依赖配置文件。
+
+![image-20231117161252258](assets/image-20231117161252258.png)
+
+**1、新建项目**
+
+![image-20231117162506592](assets/image-20231117162506592.png)
+
+![image-20231117162946925](assets/image-20231117162946925.png)
+
+![image-20231117163003560](assets/image-20231117163003560.png)
+
+![image-20231117163013826](assets/image-20231117163013826.png)
+
+![image-20231117163038152](assets/image-20231117163038152.png)
+
+![image-20231117163134336](assets/image-20231117163134336.png)
+
+
+
+**2、补充 Spring Cloud 依赖**
+
+```xml
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-dependencies</artifactId>
+    <version>2021.0.5</version>
+    <type>pom</type>
+    <scope>import</scope>
+</dependency>
+```
+
+**3、使用 new modules 和 spring boot Initializer 依次创建各模块**
+![image-20231117164601722](assets/image-20231117164601722.png)
+
+![image-20231117164636337](assets/image-20231117164636337.png)
+
+![image-20231117164729797](assets/image-20231117164729797.png)
+
+![image-20231117164911447](assets/image-20231117164911447.png)
+
+![image-20231117165035516](assets/image-20231117165035516.png)
+
+![image-20231117165107787](assets/image-20231117165107787.png)
+
+![image-20231117165200492](assets/image-20231117165200492.png)
+
+![image-20231117165224273](assets/image-20231117165224273.png)
+
+![image-20231117165310811](assets/image-20231117165310811.png)
+
+![image-20231117165430486](assets/image-20231117165430486.png)
+
+![image-20231117165545718](assets/image-20231117165545718.png)
+
+![image-20231117165627919](assets/image-20231117165627919.png)
+
+**4、各模块之间绑定子父依赖关系**
+
+1. 父模块定义 modules
+
+![image-20231117165855809](assets/image-20231117165855809.png)
+
+2. 子模块引入 parent 语法，可以通过继承父模块配置，统一项目的定义和版本号。
+
+![image-20231117170200183](assets/image-20231117170200183.png)
+
+![image-20231117170246672](assets/image-20231117170246672.png)
+
+![image-20231117170342529](assets/image-20231117170342529.png)
+
+![image-20231117170413191](assets/image-20231117170413191.png)
+
+![image-20231117170632007](assets/image-20231117170632007.png)
+
+
+
+##### 同步代码和依赖
+**1、common 公共模块（luooj-backend-common）：全局异常处理器、请求响应封装类、公用的工具类等**
+
+![image-20231117170908400](assets/image-20231117170908400.png)
+
+在 luooj-backend-microservice 的 pom.xml 中引入公共类
+
+```xml
+<!-- https://mvnrepository.com/artifact/com.baomidou/mybatis-plus-boot-starter -->
+<dependency>
+    <groupId>com.baomidou</groupId>
+    <artifactId>mybatis-plus-boot-starter</artifactId>
+    <version>3.5.2</version>
+</dependency>
+<!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-lang3</artifactId>
+</dependency>
+<!-- https://mvnrepository.com/artifact/com.google.code.gson/gson -->
+<dependency>
+    <groupId>com.google.code.gson</groupId>
+    <artifactId>gson</artifactId>
+    <version>2.9.1</version>
+</dependency>
+<!-- https://github.com/alibaba/easyexcel -->
+<dependency>
+    <groupId>com.alibaba</groupId>
+    <artifactId>easyexcel</artifactId>
+    <version>3.1.1</version>
+</dependency>
+<!-- https://hutool.cn/docs/index.html#/-->
+<dependency>
+    <groupId>cn.hutool</groupId>
+    <artifactId>hutool-all</artifactId>
+    <version>5.8.8</version>
+</dependency>
+<!-- https://mvnrepository.com/artifact/org.apache.commons/commons-collections4 -->
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-collections4</artifactId>
+    <version>4.4</version>
+</dependency>
+```
+
+**2、model 模型模块（luooj-backend-model）：很多服务公用的实体类**
+直接复制 model 包，注意代码沙箱 model 的引入
+
+![image-20231117210651475](assets/image-20231117210651475.png)
+
+**3、公用接口模块（luooj-backend-service-client）：只存放接口，不存放实现（多个服务之间要共享）**
+
+1. `先无脑搬运所有的 service，judgeService 也需要搬运。引入 common 和 model 依赖，指定 openfeign（客户端调用工具）的版本`
+
+![image-20231117212024286](assets/image-20231117212024286.png)
+
+
+
+**4、业务服务模块**
+
+1. `给所有业务服务引入公共依赖和service-client依赖`
+
+![image-20231117172646683](assets/image-20231117172646683.png)
+
+![image-20231117172713912](assets/image-20231117172713912.png)
+
+![image-20231117172800780](assets/image-20231117172800780.png)
+
+2. `给网关引入公共依赖`
+
+![image-20231117172835305](assets/image-20231117172835305.png)
+
+3. `所有业务服务主类引入注解`
+
+```java
+@SpringBootApplication
+@MapperScan("com.luoying.luoojbackenduserservice.mapper")
+@EnableScheduling
+@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
+// 这是为了能扫描到exception里的bean
+@ComponentScan("com.luoying")
+```
+
+4. `引入controller、mapper、service`
+
+![image-20231117174024423](assets/image-20231117174024423.png)
+
+![image-20231117174055702](assets/image-20231117174055702.png)
+
+![image-20231117174152318](assets/image-20231117174152318.png)
+
+4. `引入 application.yml 配置`
+
+```yml
+# 公共配置文件
+spring:
+  application:
+    name: luooj-backend-user-service
+  # 默认 dev 环境
+  profiles:
+    active: dev
+  # 支持 swagger3
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # session 配置
+  session:
+    store-type: redis
+    # 30 天过期
+    timeout: 2592000
+  # 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/luooj
+    username: root
+    password: 123
+  # Redis 配置
+  redis:
+    database: 1
+    host: localhost
+    port: 6379
+    timeout: 5000
+    password: 123
+  # 文件上传
+  servlet:
+    multipart:
+      # 大小限制
+      max-file-size: 10MB
+server:
+  address: 0.0.0.0
+  port: 8501
+  servlet:
+    context-path: /api/user
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+codesandbox:
+  type: remote
+```
+
+```yml
+# 公共配置文件
+spring:
+  application:
+    name: luooj-backend-question-service
+  # 默认 dev 环境
+  profiles:
+    active: dev
+  # 支持 swagger3
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # session 配置
+  session:
+    store-type: redis
+    # 30 天过期
+    timeout: 2592000
+  # 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/luooj
+    username: root
+    password: 123
+  # Redis 配置
+  redis:
+    database: 1
+    host: localhost
+    port: 6379
+    timeout: 5000
+    password: 123
+  # 文件上传
+  servlet:
+    multipart:
+      # 大小限制
+      max-file-size: 10MB
+server:
+  address: 0.0.0.0
+  port: 8502
+  servlet:
+    context-path: /api/question
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+codesandbox:
+  type: remote
+```
+
+```yml
+# 公共配置文件
+spring:
+  application:
+    name: luooj-backend-judge-service
+  # 默认 dev 环境
+  profiles:
+    active: dev
+  # 支持 swagger3
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # session 配置
+  session:
+    store-type: redis
+    # 30 天过期
+    timeout: 2592000
+  # 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/luooj
+    username: root
+    password: 123
+  # Redis 配置
+  redis:
+    database: 1
+    host: localhost
+    port: 6379
+    timeout: 5000
+    password: 123
+  # 文件上传
+  servlet:
+    multipart:
+      # 大小限制
+      max-file-size: 10MB
+server:
+  address: 0.0.0.0
+  port: 8503
+  servlet:
+    context-path: /api/judge
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+codesandbox:
+  type: remote
+```
+
+5. `修改Controller的请求前缀`
+
+![image-20231117191240427](assets/image-20231117191240427.png)
+
+![image-20231117191314729](assets/image-20231117191314729.png)
+
+##### 服务内部调用
+**问题：**题目服务依赖用户服务和判题服务，判题服务依赖题目服务，但是代码已经分到不同的子项目，找不到对应的 Bean。
+
+**解决：**可以使用 Open Feign 组件实现跨服务的远程调用。
+
+**Open Feign：**Http 调用客户端，提供了更方便的方式来让你远程调用其他服务，不用关心服务的调用地址，它会从Nacos 注册中心获取服务调用地址
+
+
+
+###### 梳理服务的调用关系
+
+确定每个服务依赖了其他服务的哪些接口
+
+**用户服务：**没有其他的依赖
+
+**题目服务：**
+
+- userService.getById(userId)
+- userService.getUserVO(user)
+- userService.listByIds(userIdSet)
+- userService.isAdmin(loginUser)
+- userService.getLoginUser(request)
+- judgeService.doJudge(questionSubmitId)
+
+**判题服务：**
+
+- questionService.getById(questionId)
+- questionSubmitService.getById(questionSubmitId)
+- questionSubmitService.updateById(questionSubmitUpdate)
+
+
+
+###### 确认要提供哪些服务
+
+**用户服务：**
+
+- userService.getById(userId)
+- userService.getUserVO(user)
+- userService.listByIds(userIdSet)
+- userService.isAdmin(loginUser)
+- userService.getLoginUser(request)
+
+**题目服务：**
+
+- questionService.getById(questionId)
+- questionSubmitService.getById(questionSubmitId)
+- questionSubmitService.updateById(questionSubmitUpdate)
+
+**判题服务：**
+
+- judgeService.doJudge(questionSubmitId)
+
+
+
+###### 实现 service-client 接口
+
+开启 openfeign 的支持，把我们的接口暴露出去（服务注册到注册中心上），作为 API 给其他服务调用（其他服务从注册中心寻找）
+
+
+
+**服务提供者：**理解为接口的实现方，实际提供服务的模块（把服务注册到注册中心上）
+**服务消费者：**理解为接口的调用方，需要去注册中心找到服务提供者，然后调用。（从注册中心寻找服务调用）
+
+**注意事项：**
+
+1. 要给接口打上@FeignClient注解，指明要找的服务名称和请求前缀
+2. 要给接口的每个方法打上请求注解，注意区分 Get、Post
+3. 要给请求参数打上注解，比如 RequestParam、RequestBody
+4. FeignClient 定义的请求路径一定要和服务提供方实际的请求路径保持一致
+5. 对于用户服务，有一些接口调用不利于远程参数传递（比如request）、或者实现起来非常简单（工具类），可以直接用默认方法，无需远程调用，节约性能
+
+1. `定义FeignClient接口`
+
+```java
+/**
+ * 用户服务
+ */
+@FeignClient(name = "luooj-backend-user-service", path = "/api/user/inner")
+public interface UserFeignClient {
+
+    /**
+     * 根据id获取用户
+     *
+     * @param userId
+     * @return
+     */
+    @GetMapping("/get/id")
+    User getById(@RequestParam("userId") long userId);
+
+    /**
+     * 根据id列表获取用户列表
+     * @param ids
+     * @return
+     */
+    @GetMapping("/get/ids")
+    List<User> listByIds(@RequestParam("ids") Collection<Long> ids);
+
+    /**
+     * 获取当前登录用户
+     *
+     * @param request
+     * @return
+     */
+    default User getLoginUser(HttpServletRequest request) {
+        // 先判断是否已登录
+        Object userObj = request.getSession().getAttribute(USER_LOGIN_STATE);
+        User currentUser = (User) userObj;
+        if (currentUser == null || currentUser.getId() == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
+        }
+        return currentUser;
+    }
+
+
+    /**
+     * 是否为管理员
+     *
+     * @param user
+     * @return
+     */
+    default boolean isAdmin(User user) {
+        return user != null && UserRoleEnum.ADMIN.getValue().equals(user.getUserRole());
+    }
+
+    /**
+     * 获取脱敏的用户信息
+     *
+     * @param user
+     * @return
+     */
+    default UserVO getUserVO(User user) {
+        if (user == null) {
+            return null;
+        }
+        UserVO userVO = new UserVO();
+        BeanUtils.copyProperties(user, userVO);
+        return userVO;
+    }
+
+}
+```
+
+```java
+/**
+ * 题目服务
+ */
+@FeignClient(name = "luooj-backend-question-service", path = "/api/question/inner")
+public interface QuestionFeignClient {
+    @GetMapping("/get/id")
+    Question getQuestionById(@RequestParam("questionId") long questionId);
+
+
+    @GetMapping("/question_submit/get/id")
+    QuestionSubmit getQuestionSubmitById(@RequestParam("questionSubmitId") long questionSubmitId);
+
+    @PostMapping("/question_submit/update")
+    Boolean updateQuestionSubmitById(@RequestBody QuestionSubmit questionSubmit);
+
+}
+```
+
+```java
+/**
+ * 判题服务
+ */
+@FeignClient(name = "luooj-backend-judge-service", path = "/api/judge/inner")
+public interface JudgeFeignClient {
+    @PostMapping("/do")
+    QuestionSubmitVO doJudge(@RequestParam("questionSubmitId") long questionSubmitId);
+}
+```
+
+2. `修改各业务服务的调用代码为 FeignClient`
+
+3. `编写 FeignClient 服务的实现类，注意要和 service-client 中定义的客户端保持一致`
+
+```java
+/**
+ * 该服务仅内部调用，不是给前端的
+ */
+@RestController
+@RequestMapping("/inner")
+public class UserInnerController implements UserFeignClient {
+
+    @Resource
+    private UserService userService;
+    /**
+     * 根据id获取用户
+     *
+     * @param userId
+     * @return
+     */
+    @Override
+    @GetMapping("/get/id")
+    public User getById(@RequestParam("userId") long userId) {
+        return userService.getById(userId);
+    }
+
+    /**
+     * 根据id列表获取用户列表
+     *
+     * @param ids
+     * @return
+     */
+    @Override
+    @GetMapping("/get/ids")
+    public List<User> listByIds(@RequestParam("ids") Collection<Long> ids) {
+        return userService.listByIds(ids);
+    }
+}
+
+```
+
+```java
+/**
+ * 该服务仅内部调用，不是给前端的
+ */
+public class QuestionInnerController implements QuestionFeignClient {
+
+    @Resource
+    private QuestionService questionService;
+    
+    @Resource
+    private QuestionSubmitService questionSubmitService;
+    @Override
+    public Question getQuestionById(long questionId) {
+        return questionService.getById(questionId);
+    }
+
+    @Override
+    public QuestionSubmit getQuestionSubmitById(long questionSubmitId) {
+        return questionSubmitService.getById(questionSubmitId);
+    }
+
+    @Override
+    public Boolean updateQuestionSubmitById(QuestionSubmit questionSubmit) {
+        return questionSubmitService.updateById(questionSubmit);
+    }
+}
+```
+
+```java
+@RestController
+@RequestMapping("/inner")
+public class JudgeInnerController implements JudgeFeignClient {
+    @Resource
+    private JudgeService judgeService;
+
+    @Override
+    public QuestionSubmitVO doJudge(long questionSubmitId) {
+        return judgeService.doJudge(questionSubmitId);
+    }
+}
+```
+
+4. `开启 Nacos 的配置，让服务之间能够互相发现`
+
+   https://sca.aliyun.com/zh-cn/docs/2022.0.0.0/user-guide/nacos/quick-start
+
+   1. luooj-backend-microservice 引入 Nacos 依赖（脚手架创建项目时已引入）
+
+   ```xml
+   <dependency>
+       <groupId>com.alibaba.cloud</groupId>
+       <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+   </dependency>
+   ```
+
+   2. 给所有业务服务（包括网关、service-client）增加配置
+
+   ```yml
+   spring:
+     cloud:
+       nacos:
+         discovery:
+           server-addr: 127.0.0.1:8848
+   ```
+
+   3. 给业务服务项目启动类打上注解，开启服务发现、找到对应的客户端 Bean 的位置
+
+   ```java
+   @EnableDiscoveryClient
+   @EnableFeignClients(basePackages = {"com.luoying.luoojbackendserviceclient.service"})
+   ```
+
+   4. 给网关项目启动类打上注解，开启服务发现
+
+   ```java
+   @EnableDiscoveryClient
+   ```
+
+   5. luooj-backend-microservice 引入负载均衡器依赖
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework.cloud</groupId>
+       <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+       <version>3.1.5</version>
+   </dependency>
+   ```
+
+5. `启动项目，测试依赖能否注入，能否完成相互调用`
+
+![image-20231117193929999](assets/image-20231117193929999.png)
+
+![image-20231117223958955](assets/image-20231117223958955.png)
+
+![image-20231117224005414](assets/image-20231117224005414.png)
+
+
+
+
+
+##### 微服务网关
+
+**微服务网关（luooj-backend-gateway）：**Gateway 聚合所有的接口，统一接受处理前端的请求
+**为什么要用？**
+
+- 所有的服务端口不同，增大了前端调用成本
+- 所有服务是分散的，可能需要集中进行管理、操作，比如集中解决跨域、鉴权、接口文档、服务的路由、接口安全性、流量染色、限流等
+
+>  Gateway中想自定义一些功能，需要对这个技术有比较深的理解
+
+**Gateway 是应用层网关：**会有一定的业务逻辑（比如根据用户信息判断权限）
+**Nginx 是接入层网关：**比如每个请求的日志，通常没有业务逻辑
+
+
+
+###### 接口路由
+统一地接受前端的请求，转发请求到对应的服务
+
+如何找到路由？可以编写一套路由配置，通过 api 地址前缀来找到对应的服务
+
+```yml
+spring:
+  application:
+    name: luooj-backend-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+    gateway:
+      routes:
+        - id: luooj-backend-user-service
+          uri: lb://luooj-backend-user-service
+          predicates:
+            - Path=/api/user/**
+        - id: luooj-backend-question-service
+          uri: lb://luooj-backend-question-service
+          predicates:
+            - Path=/api/question/**
+        - id: luooj-backend-judge-service
+          uri: lb://luooj-backend-judge-service
+          predicates:
+            - Path=/api/judge/**
+  main:
+    web-application-type: reactive
+
+server:
+  port: 8504
+```
+
+![image-20231118001801895](assets/image-20231118001801895.png)
+
+```java
+@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class})
+@EnableDiscoveryClient
+public class LuoojBackendGatewayApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(LuoojBackendGatewayApplication.class, args);
+    }
+
+}
+```
+
+![image-20231118000802442](assets/image-20231118000802442.png)
+
+![image-20231118001939209](assets/image-20231118001939209.png)
+
+![image-20231118002126160](assets/image-20231118002126160.png)
+
+
+
+
+
+###### 聚合文档
+
+以一个全局的视角集中查看管理接口文档
+使用 Knife4j 接口文档生成器，非常方便：https://doc.xiaominfo.com/docs/middleware-sources/spring-cloud-gateway/spring-gateway-introduction
+`1、先给所有业务服务引入依赖，同时开启接口文档的配置`
+https://doc.xiaominfo.com/docs/quick-start#openapi2
+
+```xml
+<dependency>
+    <groupId>com.github.xiaoymin</groupId>
+    <artifactId>knife4j-openapi2-spring-boot-starter</artifactId>
+    <version>4.3.0</version>
+</dependency>
+```
+
+```yml
+knife4j:
+  enable: true
+```
+
+`2、给网关配置集中管理接口文档`
+
+https://doc.xiaominfo.com/docs/middleware-sources/spring-cloud-gateway/spring-gateway-introduction#使用
+
+[Spring Cloud Gateway网关下的文档聚合?就用它了 | Knife4j (xiaominfo.com)](https://doc.xiaominfo.com/docs/blog/gateway/knife4j-gateway-introduce#42-服务发现自动聚合discover)
+
+网关项目引入依赖
+
+```
+<dependency>
+    <groupId>com.github.xiaoymin</groupId>
+    <artifactId>knife4j-gateway-spring-boot-starter</artifactId>
+    <version>4.3.0</version>
+</dependency>
+```
+
+引入配置
+
+```yml
+knife4j:
+  gateway:
+    # ① 第一个配置，开启gateway聚合组件
+    enabled: true
+    # ② 第二行配置，设置聚合模式采用discover服务发现的模式
+    strategy: discover
+    discover:
+      # ③ 第三行配置，开启discover模式
+      enabled: true
+      # ④ 第四行配置，聚合子服务全部为Swagger2规范的文档
+      version: swagger2
+```
+
+`3、访问地址即可查看聚合接口文档`http://localhost:8504/doc.html
+
+![image-20231118095612188](assets/image-20231118095612188.png)
+
+![image-20231118095647682](assets/image-20231118095647682.png)
+
+![image-20231118095802899](assets/image-20231118095802899.png)
+
+
+
+###### 分布式 Session 登录
+
+1、所有业务服务application.yml 增加 redis 配置
+
+```yml
+spring:
+  redis:
+  database: 1
+  host: localhost
+  port: 6379
+  timeout: 5000
+  password: 123 #设置了密码就写，没有就不写
+```
+
+2、luooj-backend-microservice 补充依赖
+
+```xml
+<!-- redis -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.session</groupId>
+    <artifactId>spring-session-data-redis</artifactId>
+</dependency>
+```
+
+
+
+必须引入 spring data redis 依赖：
+
+解决 cookie 跨路径问题，所有业务服务种cookie的路径改为/api
+
+```yml
+server:
+  address: 0.0.0.0
+  port: 8503
+  servlet:
+    context-path: /api/judge
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+        path: /api
+```
+
+![image-20231118105203430](assets/image-20231118105203430.png)
+
+![image-20231118105214241](assets/image-20231118105214241.png)
+
+###### 跨域解决
+全局解决跨域配置
+
+```java
+// 处理跨域
+@Configuration
+public class CorsConfig {
+    // 自定义跨域拦截器
+    @Bean
+    public CorsWebFilter corsFilter() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.addAllowedMethod("*");
+        config.setAllowCredentials(true);
+        // todo 实际改为线上真实域名、本地域名
+        config.setAllowedOriginPatterns(Arrays.asList("*"));
+        //给请求的响应加一个允许跨域的响应头
+        config.addAllowedHeader("*");
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource(new PathPatternParser());
+        source.registerCorsConfiguration("/**", config);
+        return new CorsWebFilter(source);
+    }
+}
+```
+
+###### 权限校验
+
+可以使用 Spring Cloud Gateway 的 GlobalFilter请求拦截器，接受到请求后根据请求的路径判断能否访问。
+
+```java
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
+import org.springframework.core.Ordered;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.stereotype.Component;
+import org.springframework.util.AntPathMatcher;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+import java.nio.charset.StandardCharsets;
+@Component
+public class GlobalAuthFilter implements GlobalFilter , Ordered {
+    private AntPathMatcher antPathMatcher = new AntPathMatcher();
+
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        ServerHttpRequest serverHttpRequest = exchange.getRequest();
+        String path = serverHttpRequest.getURI().getPath();
+        // 判断路径中是否包含 inner，只允许内部调用
+        if (antPathMatcher.match("/**/inner/**", path)) {
+            ServerHttpResponse response = exchange.getResponse();
+            response.setStatusCode(HttpStatus.FORBIDDEN);
+            DataBufferFactory dataBufferFactory = response.bufferFactory();
+            DataBuffer dataBuffer = dataBufferFactory.wrap("无权限".getBytes(StandardCharsets.UTF_8));
+            return response.writeWith(Mono.just(dataBuffer));
+        }
+        // todo 统一权限校验，通过 JWT 获取登录用户信息
+        return chain.filter(exchange);
+    }
+
+    /**
+     * 把该拦截器的优先级设置为最高
+     * @return
+     */
+    @Override
+    public int getOrder() {
+        return 0;
+    }
+}
+```
+
+> 扩展：可以在网关实现 Sentinel 接口限流降级，参考教程https://sca.aliyun.com/zh-cn/docs/2021.0.5.0/user-guide/sentinel/overview
+> 扩展：可以使用 JWT Token 实现用户登录，在网关层面通过 token 获取登录信息，实现鉴权
+
+> Redisson RateLimiter 也可以实现限流。
+
+##### 思考
+
+有必要用微服务么？有必要用 Spring Cloud 实现微服务么？
+
+企业内跨部门合作，其他部门不可能配合我们去使用Spring Cloud进行微服务改造。因为其他部门的项目可能使用其他语言实现。
+
+企业内部一般使用 API（RPC、HTTP）实现跨部门、跨服务的调用，数据格式和调用代码全部自动生成，保持统一，同时解耦。
+
+
+
+#### 消息队列解耦
+此处选用 RabbitMQ 消息队列改造项目，解耦判题服务和题目服务，题目服务只需要向消息队列发消息，判题服务从消息队列中取消息去执行判题，然后异步更新数据库即可
+
+
+
+##### 基本代码引入
+1、题目服务和判题服务引入依赖，因为这两个服务需要使用mq
+注意，使用的版本一定要和你的 springboot 版本一致！！！！！！！
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-amqp</artifactId>
+    <version>2.7.2</version>
+</dependency>
+```
+
+2、题目服务和判题服务的 yml 中引入配置
+
+```yml
+spring:
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+```
+
+3、创建交换机和队列
+
+```java
+@Slf4j
+public class InitRabbitMq {
+    private static final String EXCHANGE_NAME = "oj_exchange";
+    private static final String QUEUE_NAME = "oj_queue";
+
+    public static void doInit() {
+        try {
+            ConnectionFactory connectionFactory = new ConnectionFactory();
+            connectionFactory.setHost("localhost");
+            Connection connection = connectionFactory.newConnection();
+            Channel channel = connection.createChannel();
+            // 创建交换机
+            channel.exchangeDeclare(EXCHANGE_NAME, "direct");
+            // 创建队列
+            channel.queueDeclare(QUEUE_NAME, true, false, false, null);
+            // 绑定交换机
+            channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "oj_routingKey");
+            log.info("消息队列启动成功");
+        } catch (Exception e) {
+            log.error("消息队列启动失败");
+        }
+    }
+
+    public static void main(String[] args) {
+        doInit();
+
+    }
+}
+```
+
+4、生产者代码-题目服务
+
+```java
+@Component
+public class MessageProducer {
+    @Resource
+    private RabbitTemplate rabbitTemplate;
+
+    /**
+     * 发送消息
+     * @param exchange
+     * @param routingKey
+     * @param message
+     */
+    public void sendMessage(String exchange, String routingKey, String message) {
+        rabbitTemplate.convertAndSend(exchange, routingKey, message);
+    }
+}
+```
+
+5、消费者代码-判题服务
+
+```java
+@Component
+@Slf4j
+public class MessageConsumer {
+    //指定程序监听的消息队列和确认机制
+    @RabbitListener(queues = {"oj-queue"}, ackMode = "MANUAL")
+    public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+            throws IOException {
+        log.info("receiveMessage message={}", message);       
+        channel.basicAck(deliveryTag, false);
+    }
+}
+```
+
+##### 项目异步化改造
+要传递的消息是什么？题目提交 id
+
+题目服务中，把原本的本地异步执行改为向消息队列发送消息
+
+```java
+// 发送消息
+messageProducer.sendMessage(EXCHANGE_NAME, ROUTING_KEY, String.valueOf(questionSubmit.getId()));
+// 执行判题服务
+/*CompletableFuture.runAsync(() -> {
+    judgeService.doJudge(questionSubmit.getId());
+});*/
+```
+
+判题服务中，监听消息，执行判题：
+
+```java
+@Component
+@Slf4j
+public class MessageConsumer {
+
+    @Resource
+    private JudgeService judgeService;
+
+    //指定程序监听的消息队列和确认机制
+    @RabbitListener(queues = {"oj-queue"}, ackMode = "MANUAL")
+    public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+            throws IOException {
+        log.info("receiveMessage message={}", message);
+        long questionSubmitId = Long.parseLong(message);
+        try {
+            judgeService.doJudge(questionSubmitId);
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            channel.basicNack(deliveryTag,false,true);
+        }
+    }
+}
+```
+
+> 扩展：处理消息重试，避免消息积压
+> 扩展：压力测试，验证
 
 ## 前端
 
@@ -4916,7 +6668,27 @@ http://momentjs.cn/
 
 ![image-20231111214838459](assets/image-20231111214838459.png)
 
+#### 题目提交列表页
 
+**1、定义路由**
+
+![image-20231117153327158](assets/image-20231117153327158.png)
+
+**2、页面开发**
+
+![image-20231117154108511](assets/image-20231117154108511.png)
+
+![image-20231117153606559](assets/image-20231117153606559.png)
+
+![image-20231117153822408](assets/image-20231117153822408.png)
+
+![image-20231117153855111](assets/image-20231117153855111.png)
+
+![image-20231117153931523](assets/image-20231117153931523.png)
+
+**3、展示**
+
+![image-20231117154343680](assets/image-20231117154343680.png)
 
 
 
@@ -4934,7 +6706,11 @@ http://momentjs.cn/
 - 增加一个查看代码沙箱状态的接口
 - 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
 - 自行实现C++的代码沙箱
-- 模板方法设计模式，定义同一套实现流程，让不同的子类去实现流程中的具体步骤。执行步骤一样，每个步骤的实现方式不一样。
+- 每隔一段时间刷新一下提交列表页面，因为后端是异步判题的
+- 可以在网关实现 Sentinel 接口限流降级，参考教程https://sca.aliyun.com/zh-cn/docs/2021.0.5.0/user-guide/sentinel/overview
+- 可以使用 JWT Token 实现用户登录，在网关层面通过 token 获取登录信息，实现鉴权
+- 处理消息重试，避免消息积压
+- 压力测试，验证
 
 ## 踩坑
 

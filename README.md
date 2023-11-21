@@ -6690,6 +6690,117 @@ http://momentjs.cn/
 
 ![image-20231117154343680](assets/image-20231117154343680.png)
 
+## 优化
+
+### 前端全局拦截优化
+
+**问题：**每次使用OpenAPI生成代码后，OpenAPI.ts中的 WITH_CREDENTIALS 会重置为 false，且
+
+**解决：**在`src/plugins/axios.ts` 中设置对应的Cookie信息，并且多环境
+
+```ts
+// 其实就是在页面初始化加载axios时，修改OpenAPI
+// 携带凭证
+OpenAPI.WITH_CREDENTIALS = true;
+// 区分多环境
+const baseUrl =
+  process.env.NODE_ENV === "development" ? "http://localhost:8504" : "线上域名";
+
+OpenAPI.BASE = baseUrl;
+console.log("当前环境：", process.env.NODE_ENV, "请求地址", baseUrl);
+```
+
+### Docker代码沙箱使用流程优化
+
+- 判断镜像是否存在
+
+```java
+List<Image> images = dockerClient.listImagesCmd().exec();
+// 判断要拉取的镜像是否已经存在
+boolean isImageExists = images.stream().anyMatch(image -> Arrays.asList(image.getRepoTags()).contains(IMAGE_NAME));
+```
+
+- 容器是否存在，容器是否启动等情况，减少资源浪费
+
+```java
+// 2.创建容器
+// 判断容器是否存在
+List<Container> containers = dockerClient.listContainersCmd().exec();
+Optional<Container> containerOptional = containers.stream().filter(container -> Arrays.
+String containerId;
+if (containerOptional.isPresent()){
+    // 存在
+    Container container =containerOptional.get();
+    // 判断容器是否启动，未启动则手动启动
+    if(!"running".equals(container.getState())){
+        dockerClient.startContainerCmd(container.getId()).exec();
+    }
+    containerId = container.getId();
+}else {
+    // 容器不存在，创建容器
+    CreateContainerCmd containerCmd = dockerClient.createContainerCmd(IMAGE_NAME).withN
+    HostConfig hostConfig = new HostConfig();
+    // 把本地存放字节码文件的目录映射到容器的内的/app目录
+    hostConfig.setBinds(new Bind(userCodeParentPath, new Volume("/app")));
+    // 限制最大内存
+    hostConfig.withMemory(100 * 1000 * 1000L);
+    // 不让内存往硬盘写
+    hostConfig.withMemorySwap(0L);
+    hostConfig.withCpuCount(1L);
+  hostConfig.withSecurityOpts(Arrays.asList("seccomp=安全管理配置字符串"));
+    CreateContainerResponse createContainerResponse = containerCmd
+            .withReadonlyRootfs(true)
+            .withNetworkDisabled(true)
+            .withHostConfig(hostConfig)
+            .withAttachStdin(true)
+            .withAttachStdout(true)
+            .withAttachStderr(true)
+            .withTty(true)
+            .exec();
+    System.out.println(createContainerResponse);
+    containerId = createContainerResponse.getId();
+    // 3.启动容器
+    StartContainerCmd startContainerCmd = dockerClient.startContainerCmd(containerId);
+    startContainerCmd.exec();
+}
+```
+
+### 代码沙箱模板方法优化
+
+代码沙箱在执行 java 代码的过程中，会先编译出.class文件，再运行，最后删除.class文件及其父目录
+
+**问题：**如果执行过程中抛异常，会导致程序到达不了最后一步的文件删除
+
+**解决：**使用try catch finally，在finally代码块中进行文件删除
+
+```java
+File userCodeFile = null;
+ExecuteCodeResponse executeCodeResponse = null;
+try {
+    List<String> inputList = executeCodeRequest.getInputList();
+    String code = executeCodeRequest.getCode();
+    String language = executeCodeRequest.getLanguage();
+    // 1. 把用户的代码保存为文件
+    userCodeFile = saveCodeFile(code);
+    // 2. 编译代码，得到 class 文件
+    ExecuteMessage compileCodeFileExecuteMessage = compileCodeFile(userCodeFile);
+    System.out.println(compileCodeFileExecuteMessage);
+    // 3. 执行代码，得到输出结果
+    List<ExecuteMessage> executeMessageList = runCodeFile(userCodeFile, inputList);
+    // 4. 收集整理输出结果
+    executeCodeResponse = getOutputResponse(executeMessageList);
+} catch (Exception e) {
+    throw new RuntimeException(e);
+} finally {
+    // 5. 文件清理，释放空间
+    boolean b = deleteFile(userCodeFile);
+    if (!b) {
+        log.error("deleteFile error userCodeFilePath={}", userCodeFile.getAbsolutePath());
+    }
+}
+return executeCodeResponse;
+```
+
 
 
 ## 扩展思路
@@ -6711,6 +6822,48 @@ http://momentjs.cn/
 - 可以使用 JWT Token 实现用户登录，在网关层面通过 token 获取登录信息，实现鉴权
 - 处理消息重试，避免消息积压
 - 压力测试，验证
+
+## 扩展
+
+### 使用redissonji进行限流
+
+**这里对题目提交接口进行限流**
+
+```xml
+<!-- https://mvnrepository.com/artifact/org.redisson/redisson -->
+<dependency>
+  <groupId>org.redisson</groupId>
+  <artifactId>redisson</artifactId>
+  <version>3.24.3</version>
+</dependency>
+```
+
+```java
+@Configuration
+public class RedissonClientConfig {
+    @Bean
+    public RRateLimiter rateLimiter() {
+        Config config = new Config();
+        config.useSingleServer().setAddress("redis://127.0.0.1:6379").setDatabase(1).setPassword("123");
+        RedissonClient redissonClient = Redisson.create(config);
+
+        String key = "myRateLimiter";
+        RRateLimiter rateLimiter = redissonClient.getRateLimiter(key);
+        // 每五秒产生三个令牌
+        rateLimiter.setRate(RateType.OVERALL, 3, 5, RateIntervalUnit.SECONDS);
+        return rateLimiter;
+    }
+}
+```
+
+```java
+// 在接口中使用
+if (!rateLimiter.tryAcquire()){
+    throw new BusinessException(ErrorCode.API_REQUEST_ERROR,"系统繁忙，请稍后再试");
+}
+```
+
+![image-20231121180610610](assets/image-20231121180610610.png)
 
 ## 踩坑
 

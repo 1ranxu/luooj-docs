@@ -6801,7 +6801,155 @@ try {
 return executeCodeResponse;
 ```
 
+### 优化右上角样式
 
+1、右上角显示头像
+
+2、用户登录后鼠标悬停显示个人信息和退出登录，未登录显示用户登录和用户注册
+
+![image-20231123184711647](assets/image-20231123184711647.png)
+
+![image-20231123184743686](assets/image-20231123184743686.png)
+
+Arco图标是一个独立的库，需要额外引入并注册使用。
+
+```ts
+import ArcoVueIcon from '@arco-design/web-vue/es/icon';
+app.use(ArcoVueIcon)
+```
+
+```vue
+<a-dropdown trigger="hover">
+  <!--头像-->
+  <a-avatar shape="circle">
+    <template
+      v-if="loginUser && loginUser.userRole != AccessEnum.NOT_LOGIN"
+    >
+      <template v-if="loginUser.userAvatar">
+        <img
+          alt="avatar"
+          class="userAvatar"
+          :src="loginUser.userAvatar"
+        />
+      </template>
+      <!--默认头像-->
+      <template v-else>
+        <a-avatar>
+          <IconUser />
+        </a-avatar>
+      </template>
+    </template>
+    <template v-else>
+      <a-avatar>未登录</a-avatar>
+    </template>
+  </a-avatar>
+  <!--下拉框-->
+  <template #content>
+    <!--登录后-->
+    <template
+      v-if="loginUser && loginUser.userRole != AccessEnum.NOT_LOGIN"
+    >
+      <a-doption>
+        <template #icon>
+          <icon-user />
+        </template>
+        <template #default>
+          <a-anchor-link>个人信息</a-anchor-link>
+        </template>
+      </a-doption>
+      <a-doption>
+        <template #icon>
+          <icon-poweroff />
+        </template>
+        <template #default>
+          <a-anchor-link @click="logout">退出登录</a-anchor-link>
+        </template>
+      </a-doption>
+    </template>
+    <!--登录前-->
+    <template v-else>
+      <a-doption>
+        <template #icon>
+          <icon-import />
+        </template>
+        <template #default>
+          <a-anchor-link href="/user/login">登录</a-anchor-link>
+        </template>
+      </a-doption>
+      <a-doption>
+        <template #icon>
+          <icon-user />
+        </template>
+        <template #default>
+          <a-anchor-link href="/user/register">注册</a-anchor-link>
+        </template>
+      </a-doption>
+    </template>
+  </template>
+</a-dropdown>
+```
+
+```ts
+const loginUser = ref<LoginUserVO>();
+watchEffect(() => {
+  loginUser.value = store.state.user?.loginUser;
+});
+```
+
+```ts
+const logout = async () => {
+  const res = await UserControllerService.userLogoutUsingPost();
+  if (res.code === 0) {
+    location.reload();
+    message.success("退出成功");
+  } else {
+    message.error("退出失败，", res.message);
+  }
+};
+```
+
+```vue
+.userAvatar {
+  height: 160px;
+  width: 160px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+```
+
+
+
+### 优化注册页面
+
+1、添加校验规则
+
+```vue
+:rules="[
+  { required: true, message: '账号不能为空' },
+  { minLength: 4, message: '账号长度不能低于四位' },
+]"
+
+
+:rules="[
+  { required: true, message: '密码不能为空' },
+  { minLength: 6, message: '密码长度不能低于六位' },
+]"
+```
+
+2、前端判断两次密码是否一致
+
+```ts
+if (form.userAccount.length < 4 || form.userPassword.length < 6) {
+  return;
+}
+if (
+  form.checkPassword?.length !== form.userPassword?.length ||
+  form.checkPassword !== form.userPassword
+) {
+  message.error("两次输入密码不一致");
+  return;
+}
+```
 
 ## 扩展思路
 
@@ -6818,7 +6966,6 @@ return executeCodeResponse;
 - 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
 - 自行实现C++的代码沙箱
 - 每隔一段时间刷新一下提交列表页面，因为后端是异步判题的
-- 可以在网关实现 Sentinel 接口限流降级，参考教程https://sca.aliyun.com/zh-cn/docs/2021.0.5.0/user-guide/sentinel/overview
 - 可以使用 JWT Token 实现用户登录，在网关层面通过 token 获取登录信息，实现鉴权
 - 处理消息重试，避免消息积压
 - 压力测试，验证
@@ -6864,6 +7011,156 @@ if (!rateLimiter.tryAcquire()){
 ```
 
 ![image-20231121180610610](assets/image-20231121180610610.png)
+
+### Sentinel限流
+
+官方文档：https://sentinelguard.io/zh-cn/docs/metrics.html
+
+**1、下载客户端**
+
+**客户端教程：**https://sentinelguard.io/zh-cn/docs/dashboard.html
+
+**Sentinel客户端下载地址：**https://github.com/alibaba/Sentinel/releases 下载jar包
+
+使用java -jar 命令启动即可
+
+```sh
+java -Dserver.port=8055 -Dcsp.sentinel.dashboard.server=localhost:8055 -Dproject.name=luooj-backend-question-service -jar sentinel-dashboard-1.8.6.jar
+```
+
+![image-20231123151254850](assets/image-20231123151254850.png)
+
+
+
+限流只是Sentinel众多功能中的一个，还可以进行熔断等等。Sentinel根据资源进行限流，请求地址，服务，代码段都可以是一种资源
+
+**实现对题目提交接口进行限流，即将请求地址表示为一种资源。**
+
+**2、引入依赖（使用脚手架创建项目时已引入）**
+
+```xml
+<dependency>
+  <groupId>com.alibaba.cloud</groupId>
+  <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+</dependency>
+```
+
+**3、在接口上使用注解SentinelResource**
+
+参数value表示资源名称，参数blockHandler表示异常的处理方法，返回类型需要与原方法相匹配
+
+注解配置：https://sentinelguard.io/zh-cn/docs/annotation-support.html  https://github.com/alibaba/Sentinel/wiki/注解支持
+
+```java
+/**
+ * 提交题目
+ *
+ * @param questionSubmitAddRequest
+ * @param request
+ */
+@PostMapping("/question_submit")
+@SentinelResource(value = "doQuestionSubmit", blockHandler = "handleException")
+public BaseResponse<Long> doQuestionSubmit(@RequestBody QuestionSubmitAddRequest questionSubmitAddRequest,
+                                           HttpServletRequest request) {
+    /*if (!rateLimiter.tryAcquire()){
+        throw new BusinessException(ErrorCode.API_REQUEST_ERROR,"系统繁忙，请稍后再试");
+    }*/
+    if (questionSubmitAddRequest == null || questionSubmitAddRequest.getQuestionId() <= 0) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR);
+    }
+    // 登录才能提交
+    final User loginUser = userFeignClient.getLoginUser(request);
+    long questionSubmitId = questionSubmitService.doQuestionSubmit(questionSubmitAddRequest, loginUser);
+    return ResultUtils.success(questionSubmitId);
+}
+public BaseResponse<Long> handleException(BlockException exception){
+    log.info("限流异常信息"+exception);
+    return ResultUtils.success(-1L);
+}
+```
+
+**4、定义规则**
+
+通过流控规则来指定允许该资源通过的请求次数。例如下面的代码定义了资源 `doQuestionSubmit` 每秒最多只能通过 1 个请求。
+
+```java
+static {
+    initFlowRules();
+}
+private static void initFlowRules(){
+    List<FlowRule> rules = new ArrayList<>();
+    FlowRule rule = new FlowRule();
+    rule.setResource("doQuestionSubmit");
+    rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
+    // Set limit QPS to 1.
+    rule.setCount(1);
+    rules.add(rule);
+    FlowRuleManager.loadRules(rules);
+}
+```
+
+![image-20231123153455879](assets/image-20231123153455879.png)
+
+### JWT鉴权
+
+**后端**
+
+```xml
+<dependencies>
+  <dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt</artifactId>
+    <version>0.9.1</version>
+  </dependency>
+</dependencies>
+```
+
+```java
+
+public class JwtUtil {
+
+
+    private static String SECRET_KEY = "secret";
+
+    public static String extractUsername(String token) {
+        return extractClaim(token, Claims::getSubject);
+    }
+
+    public static Date extractExpiration(String token) {
+        return extractClaim(token, Claims::getExpiration);
+    }
+
+    public static <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = extractAllClaims(token);
+        return claimsResolver.apply(claims);
+    }
+
+    private static Claims extractAllClaims(String token) {
+        return Jwts.parser().setSigningKey(SECRET_KEY).parseClaimsJws(token).getBody();
+    }
+
+    private static Boolean isTokenExpired(String token) {
+        return extractExpiration(token).before(new Date());
+    }
+
+    public static String generateToken(String username) {
+        return createToken(username);
+    }
+
+    private static String createToken(String subject) {
+        return Jwts.builder().setSubject(subject).setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60 * 10))  // 10 hours
+                .signWith(SignatureAlgorithm.HS256, SECRET_KEY).compact();
+    }
+
+    public static Boolean validateToken(String token, String userName) {
+        final String username = extractUsername(token);
+        return (username.equals(userName) && !isTokenExpired(token));
+    }
+}
+```
+
+
 
 ## 踩坑
 

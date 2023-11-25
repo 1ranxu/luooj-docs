@@ -6951,9 +6951,126 @@ if (
 }
 ```
 
+### 优化题目管理页
+
+1、 去除内容和答案字段(内容和答案一般比较长，不适合放在列表页查看），去除判题用例、修改时间、点赞数、收藏数字段
+
+2、优化标签展示样式，判题配置展示样式，
+
+```vue
+<template #tags="{ record }">
+  <a-space wrap>
+    <a-tag
+      v-for="(tag, index) of JSON.parse(record.tags)"
+      :key="index"
+      color="green"
+      >{{ tag }}
+    </a-tag>
+  </a-space>
+</template>
+<template #createTime="{ record }">
+  {{ moment(record.createTime).format("YYYY-MM-DD") }}
+</template>
+```
+
+```ts
+res.data.records.map((record: any) => {
+  const judgeConfig = JSON.parse(record.judgeConfig)
+  record["timeLimit"] = judgeConfig.timeLimit;
+  record["memoryLimit"] = judgeConfig.memoryLimit;
+  record["stackLimit"] = judgeConfig.stackLimit;
+  return record;
+});
+```
+
+```ts
+const columns = [
+  {
+    title: "id",
+    dataIndex: "id",
+    width: 190,
+  },
+  {
+    title: "标题",
+    dataIndex: "title",
+    width: 180,
+  },
+  /*  {
+      title: "内容",
+      dataIndex: "content",
+    },*/
+  {
+    title: "标签",
+    slotName: "tags",
+    width: 240,
+  },
+  /*  {
+      title: "答案",
+      dataIndex: "answer",
+    },*/
+  {
+    title: "提交数",
+    dataIndex: "submitNum",
+    width: 90,
+  },
+  {
+    title: "通过数",
+    dataIndex: "acceptedNum",
+    width: 90,
+  },
+  {
+    title: "判题配置",
+    dataIndex: "judgeConfig",
+    children: [
+      {
+        title: "时间限制",
+        dataIndex: "timeLimit",
+        width: 100,
+      },
+      {
+        title: "内存限制",
+        dataIndex: "memoryLimit",
+        width: 100,
+      },
+      {
+        title: "堆栈限制",
+        dataIndex: "stackLimit",
+        width: 100,
+      },
+    ],
+    width: 300,
+  },
+  {
+    title: "创建者",
+    dataIndex: "userId",
+  },
+  {
+    title: "创建时间",
+    slotName: "createTime",
+    width: 110,
+  },
+  {
+    title: "操作",
+    slotName: "optional",
+  },
+];
+```
+
+![image-20231124185944265](assets/image-20231124185944265.png)
+
+### 
+
+```java
+@GetMapping("/get/language")
+public BaseResponse<List<String>> getCodeLanguage() {
+    return ResultUtils.success(QuestionSubmitLanguageEnum.getValues());
+}
+```
+
+
+
 ## 扩展思路
 
-- 支持多种语言
 - Remote Judge
 - 完善的评测功能：普通测评、特殊测评、交互测评、在线自测、子任务分组评测、文件IO
 - 统计分析提交记录
@@ -7025,7 +7142,7 @@ if (!rateLimiter.tryAcquire()){
 使用java -jar 命令启动即可
 
 ```sh
-java -Dserver.port=8055 -Dcsp.sentinel.dashboard.server=localhost:8055 -Dproject.name=luooj-backend-question-service -jar sentinel-dashboard-1.8.6.jar
+java -Dserver.port=8505 -Dcsp.sentinel.dashboard.server=localhost:8505 -Dproject.name=luooj-backend-question-service -jar sentinel-dashboard-1.8.6.jar
 ```
 
 ![image-20231123151254850](assets/image-20231123151254850.png)
@@ -7160,7 +7277,502 @@ public class JwtUtil {
 }
 ```
 
+### 提高代码沙箱模板的通用性
 
+**问题：**之前的代码沙箱模板中，编译代码、执行代码的命令都是写死的，是为java定制的。
+
+**解决：**提供getCmd抽象方法，交由子类实现，可以根据不同语言提供不同的命令
+
+#### 解决命令写死问题
+
+```java
+@Data
+@Builderjava
+@NoArgsConstructor
+@AllArgsConstructor
+public class CodeSandBoxCmd {
+    private String compileCmd;
+
+    private String runCmd;
+}
+```
+
+```java
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.util.StrUtil;
+import com.luoying.core.CodeSandBox;
+import com.luoying.model.*;
+import com.luoying.utils.ProcessUtil;
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * 代码沙箱模板
+ * 注意每个实现类必须自定义代码存放路径
+ */
+@Slf4j
+public abstract class CodeSandBoxTemplate implements CodeSandBox {
+    // 所有用户代码的根目录
+    String globalCodeDirPath;
+    // 对不同语言进行分类存储
+    String prefix;
+    // 代码文件名
+    String globalCodeFileName;
+    // 超时时间
+    private static final long TIMEOUT = 5000L;
+
+    protected CodeSandBoxTemplate(String globalCodeDirPath, String prefix, String globalCodeFileName) {
+        this.globalCodeDirPath = globalCodeDirPath;
+        this.prefix = prefix;
+        this.globalCodeFileName = globalCodeFileName;
+    }
+
+
+    /**
+     * 每个实现类必须实现编译以及运行的cmd
+     *
+     * @param userCodeParentPath 用户代码父目录的绝对路径
+     * @param userCodePath       用户代码文件的绝对路径
+     * @return {@link CodeSandBoxCmd}
+     */
+    protected abstract CodeSandBoxCmd getCmd(String userCodeParentPath,
+                                             String userCodePath);
+
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        File userCodeFile = null;
+        ExecuteCodeResponse executeCodeResponse = null;
+        try {
+            List<String> inputList = executeCodeRequest.getInputList();
+            String code = executeCodeRequest.getCode();
+            // 1. 把用户的代码保存为文件
+            userCodeFile = saveCodeToFile(code);
+
+            String userCodePath = userCodeFile.getAbsolutePath();
+            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+
+            CodeSandBoxCmd sandBoxCmd = getCmd(userCodeParentPath, userCodePath);
+            String compileCmd = sandBoxCmd.getCompileCmd();
+            String runCmd = sandBoxCmd.getRunCmd();
+            // 2. 编译代码
+            ExecuteMessage compileCodeFileExecuteMessage = compileCode(compileCmd);
+            System.out.println(compileCodeFileExecuteMessage);
+
+            // 3. 执行代码，得到输出结果
+            List<ExecuteMessage> executeMessageList = runCode(inputList, runCmd);
+            // 4. 收集整理输出结果
+            executeCodeResponse = getOutputResponse(executeMessageList);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            // 5. 文件清理，释放空间
+            boolean b = deleteFile(userCodeFile);
+            if (!b) {
+                log.error("deleteFile error userCodeFilePath={}", userCodeFile.getAbsolutePath());
+            }
+        }
+        return executeCodeResponse;
+    }
+
+
+    /**
+     * 1. 保存用户代码到文件中
+     * 保存到文件中的格式应为: tempCode/language/UUID/代码文件
+     *
+     * @param code 代码
+     * @return
+     */
+    private File saveCodeToFile(String code) {
+        // 所有用户代码的根目录
+        String userDir = System.getProperty("user.dir");
+        String globalCodePath = userDir + File.separator + globalCodeDirPath;
+        if (!FileUtil.exist(globalCodePath)) {
+            FileUtil.mkdir(globalCodePath);
+        }
+        // 存放用户代码的具体目录，通过prefix区分不同语言
+        String userCodeParentPath = globalCodePath+ File.separator + prefix + File.separator + UUID.randomUUID();
+        // 用户代码文件
+        String userCodePath = userCodeParentPath + File.separator + globalCodeFileName;
+        return FileUtil.writeString(code, userCodePath,
+                StandardCharsets.UTF_8);
+    }
+
+
+    /**
+     * 2. 编译代码
+     *
+     * @param compileCmd
+     * @return
+     */
+    private ExecuteMessage compileCode(String compileCmd) {
+        try {
+            Process compileProcess = Runtime.getRuntime().exec(compileCmd);
+            ExecuteMessage executeMessage = ProcessUtil.runProcessAndGetMessage(compileProcess, "编译");
+            if (executeMessage.getExitValue() != 0) {
+                throw new RuntimeException("编译错误");
+            }
+            return executeMessage;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+
+    /**
+     * 3. 执行字节码文件，获得执行结果列表
+     *
+     * @param inputList 输入用例
+     * @param runCmd    运行的cmd
+     * @return List<ExecuteMessage>
+     */
+    private List<ExecuteMessage> runCode(List<String> inputList, String runCmd) {
+        List<ExecuteMessage> executeMessageList = new LinkedList<>();
+        for (String input : inputList) {
+            Process runProcess;
+            try {
+                runProcess = Runtime.getRuntime().exec(runCmd);
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(TIMEOUT);
+                        log.info("超时了，中断");
+                        runProcess.destroy();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }).start();
+                ExecuteMessage executeMessage = ProcessUtil.handleProcessInteraction(runProcess, input, "运行");
+                log.info("{}", executeMessage);
+                executeMessageList.add(executeMessage);
+            } catch (IOException e) {
+                throw new RuntimeException("程序执行异常，" + e);
+            }
+        }
+        return executeMessageList;
+    }
+
+
+    /**
+     * 4. 获取输出结果
+     *
+     * @param executeMessageList
+     * @return
+     */
+    public ExecuteCodeResponse getOutputResponse(List<ExecuteMessage> executeMessageList) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        List<String> outputList = new ArrayList<>();
+        // 一组输入用例中某个用例执行时长的最大值，便于判断是否超时
+        long maxTime = 0;
+        for (ExecuteMessage executeMessage : executeMessageList) {
+            String errorMessage = executeMessage.getErrorMessage();
+            if (StrUtil.isNotBlank(errorMessage)) {
+                executeCodeResponse.setMessage(errorMessage);
+                // 执行中存在错误
+                executeCodeResponse.setStatus(3);
+                break;
+            }
+            outputList.add((executeMessage.getMessage()));
+            Long time = executeMessage.getTime();
+            if (time != null) {
+                maxTime = Math.max(maxTime, time);
+            }
+        }
+        executeCodeResponse.setOutputList(outputList);
+        // 表示正常运行完成
+        if (outputList.size() == executeMessageList.size()) {
+            executeCodeResponse.setStatus(2);
+        }
+        QuestionSubmitJudgeInfo questionSubmitJudgeInfo = new QuestionSubmitJudgeInfo();
+        questionSubmitJudgeInfo.setTime(maxTime);
+        executeCodeResponse.setJudgeInfo(questionSubmitJudgeInfo);
+        return executeCodeResponse;
+    }
+
+    /**
+     * 5. 删除文件
+     *
+     * @param userCodeFile
+     * @return
+     */
+    public boolean deleteFile(File userCodeFile) {
+        if (userCodeFile.getParentFile() != null) {
+            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+            boolean del = FileUtil.del(userCodeParentPath);
+            System.out.println("删除" + (del ? "成功" : "失败"));
+            return del;
+        }
+        return true;
+    }
+
+
+    /**
+     * 6. 错误处理，提升程序健壮性
+     */
+    private ExecuteCodeResponse getErrorResponse(Throwable e) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(new ArrayList<>());
+        executeCodeResponse.setMessage(e.getMessage());
+        executeCodeResponse.setStatus(3);
+        executeCodeResponse.setJudgeInfo(new QuestionSubmitJudgeInfo());
+        return executeCodeResponse;
+    }
+}
+```
+
+#### 优化ProcessUtil 
+
+**提供handleProcessInteraction模拟控制台输入数据**
+
+```java
+/**
+ * 、
+ * 进程工具类
+ */
+@Slf4j
+public class ProcessUtil {
+    /**
+     * 执行进程，并记录信息
+     *
+     * @param process
+     * @param opName
+     * @return
+     */
+    public static ExecuteMessage runProcessAndGetMessage(Process process, String opName) {
+        ExecuteMessage executeMessage = new ExecuteMessage();
+        try {
+            StopWatch watch = new StopWatch();
+            watch.start();
+            int exitValue = process.waitFor();
+            executeMessage.setExitValue(exitValue);
+            if (exitValue == 0) {
+                log.info(opName + "成功");
+
+            } else {
+                // 异常退出
+                log.error(opName + "失败，错误码为: {}", exitValue);
+                BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+                String errorOutputLine = "";
+                List<String> errorOutputStrList = new ArrayList<>();
+                while ((errorOutputLine = errorBufferedReader.readLine()) != null) {
+                    errorOutputStrList.add(errorOutputLine);
+                }
+                log.error("错误输出为：{}", errorOutputStrList);
+                // 设置错误信息
+                executeMessage.setErrorMessage(StringUtils.join(errorOutputStrList, "\n"));
+            }
+
+            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String outputLine = "";
+            List<String> outputStrList = new ArrayList<>();
+            while ((outputLine = bufferedReader.readLine()) != null) {
+                outputStrList.add(outputLine);
+            }
+            if (CollectionUtil.isNotEmpty(outputStrList)) {
+                log.info("正常输出：{}", outputStrList);
+                // 设置正常信息
+                executeMessage.setMessage(StringUtils.join(outputStrList, "\n"));
+            }
+            watch.stop();
+            executeMessage.setTime(watch.getLastTaskTimeMillis());
+        } catch (Exception e) {
+            throw new RuntimeException(opName + "错误：" + e);
+        }
+
+        return executeMessage;
+    }
+
+    /**
+     * 执行交互式进程，并记录信息
+     *
+     * @param runProcess
+     * @param input
+     * @param opName
+     * @return
+     */
+    public static ExecuteMessage handleProcessInteraction(Process runProcess, String input, String opName) {
+        OutputStream outputStream = runProcess.getOutputStream();
+        try {
+            // 模拟控制台输入数据
+            outputStream.write((input + "\n").getBytes());
+            outputStream.flush();
+            outputStream.close();
+            return runProcessAndGetMessage(runProcess, opName);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {java
+            try {
+                outputStream.close();
+            } catch (IOException e) {
+                log.error("关闭输入流失败");
+            }
+        }
+    }
+}
+```
+
+#### 根据语言选择对应代码沙箱
+
+```java
+/**
+ * 题目提交编程语言枚举
+ *
+ */
+@Getter
+public enum QuestionSubmitLanguageEnum {
+
+    JAVA("java", "java"),
+    CPLUSPLUS("cpp", "cpp");
+
+
+    private final String text;
+
+    private final String value;
+
+    QuestionSubmitLanguageEnum(String text, String value) {
+        this.text = text;
+        this.value = value;
+    }
+
+    /**
+     * 获取值列表
+     *
+     * @return
+     */
+    public static List<String> getValues() {
+        return Arrays.stream(values()).map(item -> item.value).collect(Collectors.toList());
+    }
+
+    /**
+     * 根据 value 获取枚举
+     *
+     * @param value
+     * @return
+     */
+    public static QuestionSubmitLanguageEnum getEnumByValue(String value) {
+        if (ObjectUtils.isEmpty(value)) {
+            return null;
+        }
+        for (QuestionSubmitLanguageEnum anEnum : QuestionSubmitLanguageEnum.values()) {
+            if (anEnum.value.equals(value)) {
+                return anEnum;
+            }
+        }
+        return null;
+    }
+}
+```
+
+```java
+public class CodeSandboxFactory {
+    public static CodeSandBoxTemplate getInstance(QuestionSubmitLanguageEnum language) {
+         if (QuestionSubmitLanguageEnum.JAVA.equals(language)){
+             return new JavaNativeCodeSandBox();
+         } else if (QuestionSubmitLanguageEnum.CPLUSPLUS.equals(language)) {
+             return new CppNativeCodeSandBox();
+         } else {
+             throw new RuntimeException("暂不支持");
+         }
+    }
+}
+```
+
+```java
+@RestController
+public class MainController {
+    // 定义鉴权请求头和密钥
+    private static final String AUTH_REQUEST_HEADER = "auth";
+    private static final String AUTH_REQUEST_SECRET = "secretKey";
+
+    /**
+     * 执行代码
+     *
+     * @param executeCodeRequest
+     * @return
+     */
+    @PostMapping("/executeCode")
+    ExecuteCodeResponse executeCode(@RequestBody ExecuteCodeRequest executeCodeRequest, HttpServletRequest request, HttpServletResponse response) {
+        String authHeader = request.getHeader(AUTH_REQUEST_HEADER);
+        if (!AUTH_REQUEST_SECRET.equals(authHeader)) {
+            response.setStatus(403);
+            return null;
+        }
+        if (executeCodeRequest == null) {
+            throw new RuntimeException("请求参数为空");
+        }
+        CodeSandBoxTemplate sandBoxTemplate = CodeSandboxFactory
+                .getInstance(QuestionSubmitLanguageEnum.getEnumByValue(executeCodeRequest.getLanguage()));
+        return sandBoxTemplate.executeCode(executeCodeRequest);
+    }
+}
+```
+
+#### java原生代码沙箱
+
+```java
+/**
+ * java原生代码沙箱
+ */
+@Component
+public class JavaNativeCodeSandBox extends CodeSandBoxTemplate {
+    private static final String GLOBAL_CODE_DIR_PATH = "tempCode";
+
+    private static final String PREFIX = "java";
+
+    private static final String GLOBAL_JAVA_CLASS_NAME = "Main.java";
+
+    public JavaNativeCodeSandBox() {
+        super(GLOBAL_CODE_DIR_PATH, PREFIX, GLOBAL_JAVA_CLASS_NAME);
+    }
+
+    @Override
+    protected CodeSandBoxCmd getCmd(String userCodeParentPath, String userCodePath) {
+        return CodeSandBoxCmd
+                .builder()
+                .compileCmd(String.format("javac -encoding utf-8 %s", userCodePath))
+                .runCmd(String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s Main", userCodeParentPath))
+                .build();
+    }
+}
+```
+
+### 支持C++语言
+
+安装gcc：https://blog.csdn.net/qq_45601448/article/details/109158588
+
+```java
+/**
+ * cpp原生代码沙箱
+ */
+@Component
+public class CppNativeCodeSandBox extends CodeSandBoxTemplate {
+    private static final String GLOBAL_CODE_DIR_PATH = "tempCode";
+    private static final String PREFIX = "cpp";
+    private static final String GLOBAL_CPP_NAME = "main.cpp";
+
+    public CppNativeCodeSandBox() {
+        super(GLOBAL_CODE_DIR_PATH, PREFIX, GLOBAL_CPP_NAME);
+    }
+
+    @Override
+    public CodeSandBoxCmd getCmd(String userCodeParentPath,
+                                 String userCodePath) {
+        return CodeSandBoxCmd
+                .builder()
+                .compileCmd(String.format("g++ -finput-charset=UTF-8 -fexec-charset=UTF-8 %s -o %s", userCodePath,
+                        userCodePath.substring(0, userCodePath.length() - 4)))
+                .runCmd(userCodeParentPath + File.separator +"main")
+                .build();
+    }
+}
+```
 
 ## 踩坑
 

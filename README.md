@@ -4765,6 +4765,7 @@ https://github.com/alibaba/spring-cloud-alibaba
    2. 错误处理（内存溢出、安全性、超时）
    3. 自主实现 代码沙箱（安全沙箱）
    4. 开放接口（提供一个独立的新服务）
+4. 文件服务（luooj-backend-judge-service，8505端口）
 
 >  代码沙箱服务本身就是独立的，不用纳入 Spring Cloud 的管理
 
@@ -4789,7 +4790,9 @@ https://github.com/alibaba/spring-cloud-alibaba
 - /api/judge
 - /api/judge/inner（内部调用，网关层面要做限制）
 
+**文件服务：**
 
+- /api/file
 
 ##### Nacos 注册中心
 
@@ -7067,29 +7070,610 @@ public BaseResponse<List<String>> getCodeLanguage() {
 }
 ```
 
+### 个人信息页
+
+**1、定义路由**
+
+```ts
+{
+  path: "/_userInfo",
+  name: "个人信息",
+  component: UserInfoView,
+  meta: {
+    access: AccessEnum.USER,
+    hideInMenu: true,
+  },
+},
+```
+
+**2、添加链接**
+
+```vue
+<a-doption>
+  <template #icon>
+    <icon-user />
+  </template>
+  <template #default>
+    <a-anchor-link href="/_userInfo">个人信息</a-anchor-link>
+  </template>
+</a-doption>
+```
+
+**3、页面开发：后端暂时未提供头像上传服务**
+
+```vue
+<template>
+  <div id="userInfoView">
+    <a-descriptions-item>
+      <a-avatar :size="100" shape="circle">
+        <img alt="头像" :src="loginUser.userAvatar" />
+      </a-avatar>
+    </a-descriptions-item>
+    <a-card title="我的信息">
+      <a-descriptions :data="data" size="large" column="1" bordered />
+      <template #extra>
+        <a-badge status="success" text="在线" />
+      </template>
+    </a-card>
+    <a-modal
+      width="30%"
+      :visible="visible"
+      placement="right"
+      @ok="handleOk"
+      @cancel="closeModel"
+      unmountOnClose
+    >
+      <div style="text-align: center">
+        <a-upload
+          action="/"
+          :fileList="file ? [file] : []"
+          :show-file-list="false"
+          @change="onChange"
+          :custom-request="uploadAvatar"
+        >
+          <template #upload-button>
+            <div
+              class="arco-upload-list-picture custom-upload-avatar"
+              v-if="updateForm.userAvatar"
+            >
+              <a-avatar :size="70" shape="circle">
+                <img alt="头像" :src="userAvatarImg" />
+              </a-avatar>
+              <div class="arco-upload-list-picture-mask">
+                <IconEdit />
+              </div>
+            </div>
+          </template>
+        </a-upload>
+      </div>
+      <a-form
+        :model="loginUser"
+        label-align="right"
+        title="个人信息"
+        style="max-width: 480px; margin: 0 auto"
+      >
+        <a-form-item field="用户昵称" label="昵称 :">
+          <a-input v-model="updateForm.userName" placeholder="请输入用户昵称" />
+        </a-form-item>
+        <a-form-item field="userProfile" label="简介 :">
+          <a-textarea
+            v-model="updateForm.userProfile"
+            placeholder="请输入简介"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+    <div>
+      <a-button
+        shape="round"
+        status="success"
+        size="small"
+        type="outline"
+        style="margin: 10px"
+      >
+        <a-link @click="toIndex">首页</a-link>
+      </a-button>
+      <a-button
+        shape="round"
+        status="normal"
+        size="medium"
+        type="outline"
+        style="margin: 10px"
+        @click="openModalForm"
+        >修改用户信息
+      </a-button>
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { useStore } from "vuex";
+import {
+  FileControllerService,
+  UserControllerService,
+  UserUpdateMyRequest,
+} from "../../../generated";
+import { ref } from "vue";
+import { FileItem, Message } from "@arco-design/web-vue";
+import { useRouter } from "vue-router";
+
+const router = useRouter();
+
+const file = ref();
+/**
+ * 获取用户信息
+ */
+const store = useStore();
+
+let loginUser = store.state.user.loginUser;
+
+const data = [
+  {
+    label: "用户昵称：",
+    value: loginUser.userName,
+  },
+  {
+    label: "我的简介：",
+    value: loginUser.userProfile,
+  },
+  {
+    label: "用户角色：",
+    value: loginUser.userRole === "user" ? "普通用户" : "管理员",
+  },
+];
+
+const visible = ref(false);
+
+const updateForm = ref<UserUpdateMyRequest>({
+  ...store.state.user?.loginUser,
+});
+
+// 从表单中获取的用户头像
+let userAvatarImg = updateForm.value.userAvatar;
+
+/**
+ * 上传头像
+ */
+const uploadAvatar = async () => {
+  const res = await FileControllerService.uploadFileUsingPost(file?.value.file);
+  if (res.code === 0) {
+    userAvatarImg = res.data;
+    Message.success("上传成功，点击确认即可修改头像");
+  } else {
+    Message.error("上传失败！" + res.data);
+  }
+};
+/**
+ * 打开弹窗
+ */
+const openModalForm = () => {
+  visible.value = true;
+};
+/**
+ * 确定修改按钮
+ */
+const handleOk = async () => {
+  const res = await UserControllerService.updateMyUserUsingPost({
+    ...updateForm.value,
+    userAvatar: userAvatarImg,
+  });
+  if (res.code === 0) {
+    Message.success("更新成功！");
+    visible.value = false;
+    location.reload();
+  } else {
+    Message.error("更新失败！", res.msg);
+  }
+};
+const closeModel = () => {
+  visible.value = false;
+};
+/**
+ * 回到首页
+ * @param question
+ */
+const toIndex = () => {
+  router.push({
+    path: `/`,
+  });
+};
+const onChange = async (_: never, currentFile: FileItem) => {
+  file.value = {
+    ...currentFile,
+  };
+};
+</script>
+
+<style scoped>
+#userInfoView {
+  margin: 0 auto;
+  padding: 10px;
+  max-width: 820px;
+  border-radius: 10px;
+  box-shadow: 0px 0px 10px rgba(35, 7, 7, 0.21);
+}
+</style>
+```
+
+### 微服务项目添加文件服务
+
+#### 创建项目
+
+#### 修改pom
+
+**1、修改父依赖**
+
+```xml
+<parent>
+    <groupId>com.luoying</groupId>
+    <artifactId>luooj-backend-microservice</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</parent>
+```
+
+**2、添加依赖**
+
+```xml
+<dependency>
+    <groupId>com.luoying</groupId>
+    <artifactId>luooj-backend-common</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>com.luoying</groupId>
+    <artifactId>luooj-backend-model</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>com.luoying</groupId>
+    <artifactId>luooj-backend-service-client</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>com.github.xiaoymin</groupId>
+    <artifactId>knife4j-openapi2-spring-boot-starter</artifactId>
+    <version>4.3.0</version>
+</dependency>
+<!-- https://cloud.tencent.com/document/product/436/10199-->
+<dependency>
+    <groupId>com.qcloud</groupId>
+    <artifactId>cos_api</artifactId>
+    <version>5.6.89</version>
+</dependency>
+```
+
+**3、父模块定义 modules**
+
+```xml
+<modules>
+    <module>luooj-backend-common</module>
+    <module>luooj-backend-model</module>
+    <module>luooj-backend-service-client</module>
+    <module>luooj-backend-user-service</module>
+    <module>luooj-backend-question-service</module>
+    <module>luooj-backend-judge-service</module>
+    <module>luooj-backend-gateway</module>
+    <module>luooj-backend-file-service</module>
+</modules>
+```
+
+#### 修改配置文件
+
+```yml
+# 公共配置文件
+spring:
+  application:
+    name: luooj-backend-file-service
+  # 默认 dev 环境
+  profiles:
+    active: dev
+  # 支持 swagger3
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # session 配置
+  session:
+    # todo 取消注释开启分布式 session（须先配置 Redis）
+    store-type: redis
+    # 30 天过期
+    timeout: 2592000
+  # 数据库配置
+  # todo 需替换配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/luooj
+    username: root
+    password: 123
+  # Redis 配置
+  # todo 需替换配置，然后取消注释
+  redis:
+    database: 1
+    host: localhost
+    port: 6379
+    timeout: 5000
+    password: 123
+  # Elasticsearch 配置
+  # todo 需替换配置，然后取消注释
+  #  elasticsearch:
+  #    uris: http://localhost:9200
+  #    username: root
+  #    password: 123456
+  # 文件上传
+  servlet:
+    multipart:
+      # 大小限制
+      max-file-size: 10MB
+server:
+  address: 0.0.0.0
+  port: 8505
+  servlet:
+    context-path: /api/file
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+        path: /api
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+# 对象存储
+# todo 需替换配置
+cos:
+  client:
+    accessKey: xxx
+    secretKey: xxx
+    region: xxx
+    bucket: xxx
+codesandbox:
+  type: remote
+knife4j:
+  enable: true
+```
+
+#### 主类添加注解
+
+```java
+@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class})
+@EnableScheduling
+@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
+@ComponentScan("com.luoying")
+@EnableDiscoveryClient
+@EnableFeignClients(basePackages = {"com.luoying.luoojbackendserviceclient.service"})
+```
+
+#### 完善controller
+
+```java
+import cn.hutool.core.io.FileUtil;
+import com.luoying.luoojbackendcommon.common.BaseResponse;
+import com.luoying.luoojbackendcommon.common.ErrorCode;
+import com.luoying.luoojbackendcommon.common.ResultUtils;
+import com.luoying.luoojbackendcommon.constant.FileConstant;
+import com.luoying.luoojbackendcommon.exception.BusinessException;
+import com.luoying.luoojbackendfileservice.manager.CosManager;
+import com.luoying.luoojbackendmodel.dto.file.UploadFileRequest;
+import com.luoying.luoojbackendmodel.entity.User;
+import com.luoying.luoojbackendmodel.enums.FileUploadBizEnum;
+import com.luoying.luoojbackendserviceclient.service.UserFeighClient;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.RandomStringUtils;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
+import java.io.File;
+import java.util.Arrays;
+
+/**
+ * 文件接口
+ *
+ */
+@RestController
+@RequestMapping("/")
+@Slf4j
+public class FileController {
+
+    @Resource
+    private UserFeighClient userFeighClient;
+
+    @Resource
+    private CosManager cosManager;
+
+    /**
+     * 文件上传
+     *
+     * @param multipartFile
+     * @param uploadFileRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/upload")
+    public BaseResponse<String> uploadFile(@RequestPart("file") MultipartFile multipartFile,
+                                           UploadFileRequest uploadFileRequest, HttpServletRequest request) {
+        String biz = uploadFileRequest.getBiz();
+        FileUploadBizEnum fileUploadBizEnum = FileUploadBizEnum.getEnumByValue(biz);
+        if (fileUploadBizEnum == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        validFile(multipartFile, fileUploadBizEnum);
+        User loginUser = this.userFeighClient.getLoginUser(request);
+        // 文件目录：根据业务、用户来划分
+        String uuid = RandomStringUtils.randomAlphanumeric(8);
+        String filename = uuid + "-" + multipartFile.getOriginalFilename();
+        String filepath = String.format("/%s/%s/%s", fileUploadBizEnum.getValue(), loginUser.getId(), filename);
+        File file = null;
+        try {
+            // 上传文件
+            file = File.createTempFile(filepath, null);
+            multipartFile.transferTo(file);
+            cosManager.putObject(filepath, file);
+            // 返回可访问地址
+            return ResultUtils.success(FileConstant.COS_HOST + filepath);
+        } catch (Exception e) {
+            log.error("file upload error, filepath = " + filepath, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "上传失败");
+        } finally {
+            if (file != null) {
+                // 删除临时文件
+                boolean delete = file.delete();
+                if (!delete) {
+                    log.error("file delete error, filepath = {}", filepath);
+                }
+            }
+        }
+    }
+
+    /**
+     * 校验文件
+     *
+     * @param multipartFile
+     * @param fileUploadBizEnum 业务类型
+     */
+    private void validFile(MultipartFile multipartFile, FileUploadBizEnum fileUploadBizEnum) {
+        // 文件大小
+        long fileSize = multipartFile.getSize();
+        // 文件后缀
+        String fileSuffix = FileUtil.getSuffix(multipartFile.getOriginalFilename());
+        final long ONE_M = 1024 * 1024L;
+        if (FileUploadBizEnum.USER_AVATAR.equals(fileUploadBizEnum)) {
+            if (fileSize > ONE_M) {
+                throw new BusinessException(ErrorCode.PARAMS_ERROR, "文件大小不能超过 1M");
+            }
+            if (!Arrays.asList("jpeg", "jpg", "svg", "png", "webp").contains(fileSuffix)) {
+                throw new BusinessException(ErrorCode.PARAMS_ERROR, "文件类型错误");
+            }
+        }
+    }
+}
+```
+
+### 优化通过数，提交数
+
+#### 设置提交数
+
+`QuestionSubmitServiceImpl.java` 的 `doQuestionSubmit` 方法中设置提交数，提交了就更新数据库
+
+```java
+// 设置提交数
+Integer submitNum = question.getSubmitNum();
+Question updateQuestion = new Question();
+synchronized (question.getSubmitNum()) {
+    submitNum = submitNum + 1;
+    updateQuestion.setId(questionId);
+    updateQuestion.setSubmitNum(submitNum);
+    boolean save = questionService.updateById(updateQuestion);
+    if (!save) {
+        throw new BusinessException(ErrorCode.OPERATION_ERROR, "数据保存失败");
+    }
+}
+```
+
+#### 设置通过数
+
+消息队列的消费者中设置通过数，只有通过了判题服务，得到 `Accept` 结果，才算提交通过
+
+```java
+@Resource
+private QuestionFeignClient questionFeignClient;
+//指定程序监听的消息队列和确认机制
+@RabbitListener(queues = {"oj_queue"}, ackMode = "MANUAL")
+public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+        throws IOException {
+    log.info("receiveMessage message={}", message);
+    long questionSubmitId = Long.parseLong(message);
+    try {
+        // 判题
+        judgeService.doJudge(questionSubmitId);
+        // 判断是否判题成功且通过
+        QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+        QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
+        String judgeMessage = questionSubmitVO.getJudgeInfo().getMessage();
+        if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())
+                || !JudgeInfoMessagenum.ACCEPTED.equals(JudgeInfoMessagenum.getEnumByValue(judgeMessage))) {
+            channel.basicNack(deliveryTag, false, false);
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
+        }
+        // 设置通过数
+        Long questionId = questionSubmit.getQuestionId();
+        Question question = questionFeignClient.getQuestionById(questionId);
+        Integer acceptedNum = question.getAcceptedNum();
+        Question updateQuestion = new Question();
+        synchronized (question.getAcceptedNum()) {
+            acceptedNum = acceptedNum + 1;
+            updateQuestion.setId(questionId);
+            updateQuestion.setAcceptedNum(acceptedNum);
+            boolean save = questionFeignClient.updateQuestionById(updateQuestion);
+            if (!save) {
+                throw new BusinessException(ErrorCode.OPERATION_ERROR, "保存数据失败");
+            }
+        }
+        // 确认消息
+        channel.basicAck(deliveryTag, false);
+    } catch (Exception e) {
+        channel.basicNack(deliveryTag, false, false);
+    }
+}
+```
+
+#### QuestionFeignClient 提供接口
+
+```java
+@PostMapping("/update")
+Boolean updateQuestionById(@RequestBody Question question);
+```
+
+#### QuestionInnerController 实现接口
+
+```java
+@Override
+@PostMapping("/update")
+public Boolean updateQuestionById(@RequestBody Question question){
+    return questionService.updateById(question);
+}
+```
+
+### 优化通过率展示
+
+```vue
+<template #acceptedRate="{ record }">
+  {{
+    `${
+      record.submitNum
+        ? (record.acceptedNum / record.submitNum) * 100
+        : "0"
+    }%(${record.acceptedNum}/${record.submitNum})`
+  }}
+</template>
+```
+
+### 题目提交列表页面添加刷新按钮
+
+```vue
+<a-form-item>
+  <a-button type="primary" status="success" @click="loadData"
+    >刷新
+  </a-button>
+</a-form-item>
+```
 
 
-## 扩展思路
-
-- Remote Judge
-- 完善的评测功能：普通测评、特殊测评、交互测评、在线自测、子任务分组评测、文件IO
-- 统计分析提交记录
-- 根据通过率来自动给题目打难易度标签
-- 提交统计页
-- 用户个人页
-- 用diff editor帮助用户对比自己的代码和标准答案 https://microsoft.github.io/monaco-editor https://microsoft.github.io/monaco-editor/playground.html?source=v0.44.0#example-creating-the-diffeditor-hello-diff-world
-- 优化题目管理页
-- 增加一个查看代码沙箱状态的接口
-- 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
-- 自行实现C++的代码沙箱
-- 每隔一段时间刷新一下提交列表页面，因为后端是异步判题的
-- 可以使用 JWT Token 实现用户登录，在网关层面通过 token 获取登录信息，实现鉴权
-- 处理消息重试，避免消息积压
-- 压力测试，验证
 
 ## 扩展
 
-### 使用redissonji进行限流
+### 使用redisson进行限流
 
 **这里对题目提交接口进行限流**
 
@@ -7220,62 +7804,303 @@ private static void initFlowRules(){
 
 ### JWT鉴权
 
-**后端**
+#### **后端**
+
+**1、microservice 引入依赖**
 
 ```xml
-<dependencies>
-  <dependency>
+<dependency>
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt</artifactId>
     <version>0.9.1</version>
-  </dependency>
-</dependencies>
+</dependency>
 ```
 
+**2、gateway 模块中配置放行的路由**
+
+```yml
+gateway:
+  excludedUrls: /api/user/get/login,/api/user/logout,/user/register,/api/user/update/my,/api/user/login,/user/getLoginUser,/api/user/register,/api/question/list/page/vo,/api/file
+```
+
+**3、common 模块提供 JwtUtils**
+
 ```java
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import org.apache.commons.lang3.StringUtils;
 
-public class JwtUtil {
+import java.util.Date;
+import java.util.Map;
+
+/**
+ * JWT 工具类
+ *
+ * @author Shier
+ */
+public class JwtUtils {
+
+    /**
+     * TOKEN的有效期1小时（S）
+     */
+    private static final int TOKEN_TIME_OUT = 7 * 24 * 3600;
+
+    /**
+     * 加密KEY
+     */
+    private static final String TOKEN_SECRET = "shier";
 
 
-    private static String SECRET_KEY = "secret";
-
-    public static String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
+    /**
+     * 生成Token
+     *
+     * @param params
+     * @return
+     */
+    public static String getToken(Map params) {
+        long currentTime = System.currentTimeMillis();
+        return Jwts.builder()
+                // 加密方式
+                .signWith(SignatureAlgorithm.HS512, TOKEN_SECRET)
+                // 过期时间戳
+                .setExpiration(new Date(currentTime + TOKEN_TIME_OUT * 1000))
+                .addClaims(params)
+                .compact();
     }
 
-    public static Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
+
+    /**
+     * 获取Token中的claims信息
+     */
+    public static Claims getClaims(String token) {
+        return Jwts.parser()
+                .setSigningKey(TOKEN_SECRET)
+                .parseClaimsJws(token).getBody();
     }
 
-    public static <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
 
-    private static Claims extractAllClaims(String token) {
-        return Jwts.parser().setSigningKey(SECRET_KEY).parseClaimsJws(token).getBody();
-    }
+    /**
+     * 是否有效 true-有效，false-失效
+     */
+    public static boolean verifyToken(String token) {
 
-    private static Boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
-    }
+        if (StringUtils.isEmpty(token)) {
+            return false;
+        }
 
-    public static String generateToken(String username) {
-        return createToken(username);
-    }
+        try {
+            Claims claims = Jwts.parser()
+                    .setSigningKey("shier")
+                    .parseClaimsJws(token)
+                    .getBody();
+        } catch (Exception e) {
+            return false;
+        }
 
-    private static String createToken(String subject) {
-        return Jwts.builder().setSubject(subject).setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60 * 10))  // 10 hours
-                .signWith(SignatureAlgorithm.HS256, SECRET_KEY).compact();
-    }
-
-    public static Boolean validateToken(String token, String userName) {
-        final String username = extractUsername(token);
-        return (username.equals(userName) && !isTokenExpired(token));
+        return true;
     }
 }
 ```
+
+**4、gateway 模块中创建AuthFilter类**
+
+```java
+/**
+ * JWT统一鉴权 全局过滤器
+ *
+ * @author 落樱的悔恨
+ */
+// 不使用则可以注释掉@Component注解
+@Component 
+public class AuthFilter implements GlobalFilter, Ordered {
+    /**
+     * 如果配置文件中的字符串是用,隔开的 springboot 在value时会自动变成 List<String> 的数组
+     * 配置不需要校验的链接
+     */
+    @Value("#{'${gateway.excludedUrls}'.split(',')}")
+    private List<String> excludedUrls;
+
+    /**
+     * 过滤器核心代码
+     *
+     * @param exchange
+     * @param chain
+     * @return
+     */
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 1.排除不需要权限校验的连接
+        // 当前请求连接
+        String path = exchange.getRequest().getURI().getPath();
+        // 如果 当前链接不需要校验则直接放行
+        if (excludedUrls.contains(path)) {
+            return chain.filter(exchange);
+        }
+        // 2.获取token并校验
+        String token = exchange.getRequest().getHeaders().getFirst("Authorization");
+        // 不为空时把 ("Bearer"去掉) 有时候前端传来的 token是带这个的
+        if (!StringUtils.isEmpty(token)) {
+            token = token.replace("Bearer ", "");
+        }
+        ServerHttpResponse response = exchange.getResponse();
+        // 3.如果校验失败，相应状态码 401
+        // 2、使用工具类，判断token是否有效
+        boolean verifyToken = JwtUtils.verifyToken(token);
+        // 3、如果token失效，返回状态码401，拦截
+        if (!verifyToken) {
+            Map<String, Object> responseData = new HashMap<>();
+            responseData.put("errCode", 401);
+            responseData.put("errMessage", "用户未登录");
+            return responseError(response, responseData);
+        }
+        return chain.filter(exchange);
+
+    }
+
+    /**
+     * 响应错误数据 这个方法就是将这个map转化为JSON
+     *
+     * @param response
+     * @param responseData
+     * @return
+     */
+    private Mono<Void> responseError(ServerHttpResponse response, Map<String, Object> responseData) {
+        // 将信息转换为 JSON
+        ObjectMapper objectMapper = new ObjectMapper();
+        byte[] data = new byte[0];
+        try {
+            data = objectMapper.writeValueAsBytes(responseData);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+        // 输出错误信息到页面
+        DataBuffer buffer = response.bufferFactory().wrap(data);
+        response.setStatusCode(HttpStatus.UNAUTHORIZED);
+        response.getHeaders().add("Content-Type", "application/json;charset=UTF-8");
+        return response.writeWith(Mono.just(buffer));
+    }
+
+    /**
+     * 配置执行顺序
+     *
+     * @return
+     */
+    @Override
+    public int getOrder() {
+        return Ordered.LOWEST_PRECEDENCE;
+    }
+}
+```
+
+**5、model 模块 LoginUserVO 添加 token字段**
+
+```java
+/**
+ * Jwt token
+ */
+private String token;
+```
+
+**6、user-service 模块userLogin方法生成 token 返回给前端**
+
+```java
+@Override
+public LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request) {
+    // 1. 校验
+    if (StringUtils.isAnyBlank(userAccount, userPassword)) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
+    }
+    if (userAccount.length() < 4) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号错误");
+    }
+    if (userPassword.length() < 8) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "密码错误");
+    }
+    // 2. 加密
+    String encryptPassword = DigestUtils.md5DigestAsHex((SALT + userPassword).getBytes());
+    // 查询用户是否存在
+    QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+    queryWrapper.eq("userAccount", userAccount);
+    queryWrapper.eq("userPassword", encryptPassword);
+    User user = this.baseMapper.selectOne(queryWrapper);
+    // 用户不存在
+    if (user == null) {
+        log.info("user login failed, userAccount cannot match userPassword");
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误");
+    }
+    // 3. 记录用户的登录态
+    request.getSession().setAttribute(USER_LOGIN_STATE, user);
+    // 4、将登录信息保持在token中，通过JWT生成token(存入id和账号)
+    Map<String, Object> tokenMap = new HashMap<>();
+    tokenMap.put("id", user.getId());
+    tokenMap.put("userAccount", user.getUserAccount());
+    String token = JwtUtils.getToken(tokenMap);
+    // 5、构造返回值
+    LoginUserVO loginUserVO = this.getLoginUserVO(user);
+    loginUserVO.setToken(token);
+    return loginUserVO;
+}
+```
+
+
+
+#### 前端
+
+**1、在 `LoginUserVO` 中增加多一个字段**
+
+```ts
+token?: string;
+```
+
+![image-20231128204818697](assets/image-20231128204818697.png)
+
+**2、在 `axios.ts` 中获取到token**
+
+```ts
+axios.interceptors.request.use(
+  function (config) {
+    // 在发送请求之前做些什么
+    // 假设token存在localStorage中
+    const token = localStorage.getItem("token");
+    console.log("token:", token);
+    if (token) {
+      config.headers.Authorization = token;
+    }
+    return config;
+  },
+  function (error) {
+    // 对请求错误做些什么
+    return Promise.reject(error);
+  }
+);
+```
+
+**3、在 `UserLoginView.vue` 中 讲token保存到本地**
+
+```ts
+const handleSubmit = async () => {
+  // console.log(form);
+  const res = await UserControllerService.userLoginUsingPost(form);
+  if (res.code === 0) {
+    message.success("登录成功");
+    // console.log(route.query.redirect);
+    await store.dispatch("user/getLoginUser");
+    // 将token保存在localStorage中
+    localStorage.setItem("token", res.data.token);
+    // 重定向到用户之前访问的页面
+    await router.push({
+      path: `${route.query.redirect ?? "/"}`,
+      //不会占用浏览器历史记录的堆栈，不能在通过后退箭头返回登录页面
+      replace: true,
+    });
+  } else {
+    message.error("登录失败，" + res.message);
+  }
+};
+```
+
+
 
 ### 提高代码沙箱模板的通用性
 
@@ -7773,6 +8598,91 @@ public class CppNativeCodeSandBox extends CodeSandBoxTemplate {
     }
 }
 ```
+
+### 编程语言类型改为后端下发
+
+#### 后端
+
+```java
+@GetMapping("/get/language")
+public BaseResponse<List<String>> getCodeLanguage() {
+    return ResultUtils.success(QuestionSubmitLanguageEnum.getValues());
+}
+```
+
+#### 前端
+
+**1、后端改为微服务后，暂时还未解决如何使用OPenAPI自动生成接口调用代码，所以这里选择手写**
+
+```ts
+export type BaseResponse_Language_ = {
+    code?: number;
+    data?: string[];
+    message?: string;
+};
+```
+
+```ts
+/**
+ * getCodeLanguageUsingGet
+ * @returns BaseResponse_Language_ OK
+ * @throws ApiError
+ */
+public static getCodeLanguageUsingGet(): CancelablePromise<BaseResponse_Language_> {
+    return __request(OpenAPI, {
+        method: 'GET',
+        url: '/api/question/get/language',
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },
+    });
+}
+```
+
+**2、修改做题页面**
+
+```vue
+<a-form :model="form" layout="inline">
+  <a-form-item field="language" label="编程语言">
+    <a-select
+      v-model="form.language"
+      :style="{ width: '320px' }"
+      placeholder="请选择语言"
+    >
+      <a-option v-for="language in languages" :key="language">{{
+        language
+      }}</a-option>
+    </a-select>
+  </a-form-item>
+</a-form>
+```
+
+```ts
+const languages = ref<string[]>();
+onMounted(async () => {
+  loadData();
+  const res = await QuestionControllerService.getCodeLanguageUsingGet();
+  if (res.code === 0) {
+    languages.value = res.data;
+  }
+  // console.log(res);
+});
+```
+
+## 扩展思路
+
+- Remote Judge
+- 完善的评测功能：普通测评、特殊测评、交互测评、在线自测、子任务分组评测、文件IO
+- 统计分析提交记录
+- 根据通过率来自动给题目打难易度标签
+- 提交统计页
+- 用diff editor帮助用户对比自己的代码和标准答案 https://microsoft.github.io/monaco-editor https://microsoft.github.io/monaco-editor/playground.html?source=v0.44.0#example-creating-the-diffeditor-hello-diff-world
+- 增加一个查看代码沙箱状态的接口
+- 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
+- 处理消息重试，避免消息积压
+- 压力测试，验证
 
 ## 踩坑
 

@@ -550,7 +550,7 @@ create table if not exists question
 
 - 用户提交的代码 code
 
-- 判题状态 status（0-待判题、1-判题中、2-通过、3-失败）
+- 判题状态 status（0-待判题、1-判题中、2-已判题、3-失败）
 
 - 判题信息 judgeInfo （判题过程中得到的一些信息，比如程序执行时间，内存占用，失败原因）（json对象）
 
@@ -6954,123 +6954,7 @@ if (
 }
 ```
 
-### 优化题目管理页
-
-1、 去除内容和答案字段(内容和答案一般比较长，不适合放在列表页查看），去除判题用例、修改时间、点赞数、收藏数字段
-
-2、优化标签展示样式，判题配置展示样式，
-
-```vue
-<template #tags="{ record }">
-  <a-space wrap>
-    <a-tag
-      v-for="(tag, index) of JSON.parse(record.tags)"
-      :key="index"
-      color="green"
-      >{{ tag }}
-    </a-tag>
-  </a-space>
-</template>
-<template #createTime="{ record }">
-  {{ moment(record.createTime).format("YYYY-MM-DD") }}
-</template>
-```
-
-```ts
-res.data.records.map((record: any) => {
-  const judgeConfig = JSON.parse(record.judgeConfig)
-  record["timeLimit"] = judgeConfig.timeLimit;
-  record["memoryLimit"] = judgeConfig.memoryLimit;
-  record["stackLimit"] = judgeConfig.stackLimit;
-  return record;
-});
-```
-
-```ts
-const columns = [
-  {
-    title: "id",
-    dataIndex: "id",
-    width: 190,
-  },
-  {
-    title: "标题",
-    dataIndex: "title",
-    width: 180,
-  },
-  /*  {
-      title: "内容",
-      dataIndex: "content",
-    },*/
-  {
-    title: "标签",
-    slotName: "tags",
-    width: 240,
-  },
-  /*  {
-      title: "答案",
-      dataIndex: "answer",
-    },*/
-  {
-    title: "提交数",
-    dataIndex: "submitNum",
-    width: 90,
-  },
-  {
-    title: "通过数",
-    dataIndex: "acceptedNum",
-    width: 90,
-  },
-  {
-    title: "判题配置",
-    dataIndex: "judgeConfig",
-    children: [
-      {
-        title: "时间限制",
-        dataIndex: "timeLimit",
-        width: 100,
-      },
-      {
-        title: "内存限制",
-        dataIndex: "memoryLimit",
-        width: 100,
-      },
-      {
-        title: "堆栈限制",
-        dataIndex: "stackLimit",
-        width: 100,
-      },
-    ],
-    width: 300,
-  },
-  {
-    title: "创建者",
-    dataIndex: "userId",
-  },
-  {
-    title: "创建时间",
-    slotName: "createTime",
-    width: 110,
-  },
-  {
-    title: "操作",
-    slotName: "optional",
-  },
-];
-```
-
-![image-20231124185944265](assets/image-20231124185944265.png)
-
-### 
-
-```java
-@GetMapping("/get/language")
-public BaseResponse<List<String>> getCodeLanguage() {
-    return ResultUtils.success(QuestionSubmitLanguageEnum.getValues());
-}
-```
-
-### 个人信息页
+### 新增个人信息页
 
 **1、定义路由**
 
@@ -7659,7 +7543,397 @@ public Boolean updateQuestionById(@RequestBody Question question){
 </template>
 ```
 
-### 题目提交列表页面添加刷新按钮
+### 新增用户管理页
+
+**1、定义路由，仅管理员可见**
+
+```ts
+{
+  path: "/_userManage",
+  name: "用户管理",
+  component: UserManageView,
+  meta: {
+    access: ACCESS_ENUM.ADMIN,
+  },
+},
+```
+
+**2、开发页面**
+
+```vue
+<template>
+  <div id="userManageView">
+    <a-form
+      :model="searchParams"
+      layout="inline"
+      style="justify-content: center; align-content: center; margin: 25px"
+    >
+      <a-form-item field="title" label="用户id：" tooltip="请输入用户的id">
+        <a-input v-model="searchParams.id" placeholder="请输入要搜索的用户id" />
+      </a-form-item>
+      <a-form-item field="title" label="用户昵称：" tooltip="请输入用户昵称">
+        <a-input
+          v-model="searchParams.userName"
+          placeholder="请输入要搜索的用户名称"
+        />
+      </a-form-item>
+      <a-form-item>
+        <a-button type="outline" shape="round" status="normal" @click="doSubmit"
+          >搜 索
+        </a-button>
+      </a-form-item>
+      <a-form-item>
+        <a-button type="outline" shape="round" status="normal" @click="loadData"
+          >刷 新
+        </a-button>
+      </a-form-item>
+    </a-form>
+    <a-table
+      :column-resizable="true"
+      :ref="tableRef"
+      :columns="columns"
+      :data="dataList"
+      :pagination="{
+        showTotal: true,
+        pageSize: searchParams.pageSize,
+        current: searchParams.current,
+        total,
+        showJumper: true,
+        showPageSize: true,
+      }"
+      @page-change="onPageChange"
+      @pageSizeChange="onPageSizeChange"
+    >
+      <template #userAvatar="{ record }">
+        <a-avatar :size="70" shape="circle">
+          <img alt="userAvatar" :src="record.userAvatar" />
+        </a-avatar>
+      </template>
+
+      <template #userRole="{ record }">
+        <!-- user普通用户 admin管理员 -->
+        <a-tag v-if="record.userRole === 'user'" color="arcoblue"
+          >普通用户
+        </a-tag>
+        <a-tag v-if="record.userRole === 'admin'" color="green">管理员</a-tag>
+      </template>
+
+      <template #createTime="{ record }">
+        {{ moment(record.createTime).format("YYYY-MM-DD HH:mm:ss") }}
+      </template>
+
+      <template #updateTime="{ record }">
+        {{ moment(record.updateTime).format("YYYY-MM-DD HH:mm:ss") }}
+      </template>
+
+      <template #optional="{ record }">
+        <a-space>
+          <a-button
+            shape="round"
+            type="outline"
+            @click="openModalForm(record.id)"
+            >修改
+          </a-button>
+          <a-popconfirm
+            content="确定要删除此题目吗?"
+            type="error"
+            okText="是"
+            cancelText="否"
+            @cancel="
+              () => {
+                message.warning(`已取消`);
+              }
+            "
+            @ok="doDelete(record)"
+          >
+            <a-button shape="round" type="outline" status="danger"
+              >删除
+            </a-button>
+          </a-popconfirm>
+        </a-space>
+      </template>
+    </a-table>
+    <a-modal
+      width="30%"
+      :visible="visible"
+      placement="right"
+      @ok="handleOk"
+      @cancel="closeModel"
+      unmountOnClose
+    >
+      <div style="text-align: center">
+        <a-upload
+          action="/"
+          :fileList="file ? [file] : []"
+          :show-file-list="false"
+          @change="onChange"
+          :custom-request="uploadAvatar"
+        >
+          <template #upload-button>
+            <a-avatar :size="70" shape="circle">
+              <img alt="头像" :src="userInfo?.userAvatar" />
+            </a-avatar>
+          </template>
+        </a-upload>
+      </div>
+      <a-form
+        label-align="right"
+        title="个人信息"
+        style="max-width: 480px; margin: 0 auto"
+      >
+        <a-form-item field="昵称" label="昵称 :">
+          <a-input v-model="userInfo.userName" placeholder="请输入用户昵称" />
+        </a-form-item>
+        <a-form-item field="账号" label="账号 :">
+          <a-input v-model="userInfo.userAccount" placeholder="请输入账号" />
+        </a-form-item>
+        <a-form-item field="用户角色" label="角色 :">
+          <a-select v-model="userInfo.userRole" placeholder="请选择用户角色">
+            <a-option value="admin">管理员</a-option>
+            <a-option value="user">普通用户</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="性别" label="性别 :">
+          <a-select v-model="userInfo.gender" placeholder="请选择用户性别">
+            <a-option value="0">男</a-option>
+            <a-option value="1">女</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="userProfile" label="简介 :">
+          <a-textarea
+            v-model="userInfo.userProfile"
+            placeholder="请输入用户简介"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted, ref, watchEffect } from "vue";
+import {
+  FileControllerService,
+  User,
+  UserControllerService,
+} from "../../../generated";
+import message from "@arco-design/web-vue/es/message";
+import moment from "moment";
+import { useRouter } from "vue-router";
+import { FileItem, Message } from "@arco-design/web-vue";
+
+const router = useRouter();
+const tableRef = ref();
+const file = ref();
+
+const visible = ref(false);
+const userInfo = ref<User>();
+
+const dataList = ref([]);
+const total = ref(0);
+const searchParams = ref({
+  id: undefined,
+  userName: "",
+  pageSize: 10,
+  current: 1,
+});
+
+const loadData = async () => {
+  const res = await UserControllerService.listUserByPageUsingPost({
+    ...searchParams.value,
+    sortField: "createTime",
+    sortOrder: "descend",
+  });
+  if (res.code === 0) {
+    dataList.value = res.data.records;
+    total.value = res.data.total;
+  } else {
+    message.error("加载失败，" + res.message);
+  }
+};
+
+/**
+ * 监听 searchParams 变量，改变时触发页面的重新加载
+ */
+watchEffect(() => {
+  loadData();
+});
+
+/**
+ * 页面加载时，请求数据
+ */
+onMounted(() => {
+  loadData();
+});
+
+const columns = [
+  {
+    title: "id",
+    dataIndex: "id",
+    align: "center",
+  },
+  {
+    title: "账号",
+    dataIndex: "userAccount",
+    align: "center",
+  },
+  {
+    title: "名称",
+    dataIndex: "userName",
+    align: "center",
+  },
+  {
+    title: "头像",
+    slotName: "userAvatar",
+    align: "center",
+    width: 64,
+  },
+  {
+    title: "简介",
+    dataIndex: "userProfile",
+    align: "center",
+  },
+  {
+    title: "性别",
+    dataIndex: "gender",
+    align: "center",
+  },
+  {
+    title: "角色",
+    slotName: "userRole",
+    align: "center",
+  },
+  {
+    title: "创建时间",
+    slotName: "createTime",
+    align: "center",
+  },
+  {
+    title: "更新时间",
+    slotName: "updateTime",
+    align: "center",
+  },
+  {
+    title: "操作",
+    slotName: "optional",
+    align: "center",
+  },
+];
+/**
+ * 分页
+ * @param page
+ */
+const onPageChange = (page: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: page,
+  };
+};
+
+/**
+ * 分页大小
+ * @param size
+ */
+const onPageSizeChange = (size: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    pageSize: size,
+  };
+};
+/**
+ * 打开弹窗,获取到用户信息
+ */
+const openModalForm = async (userId: any) => {
+  const res = await UserControllerService.getUserByIdUsingGet(userId);
+  console.log("res:", res.data);
+  userInfo.value = res.data;
+  console.log(userInfo.value);
+  visible.value = true;
+};
+/**
+ * 删除
+ * @param user
+ */
+const doDelete = async (user: User) => {
+  const res = await UserControllerService.deleteUserUsingPost({
+    id: user.id,
+  });
+  if (res.code === 0) {
+    message.success("删除成功");
+    loadData();
+  } else {
+    message.error("删除失败");
+  }
+};
+
+/**
+ * 确认搜索，重新加载数据
+ */
+const doSubmit = () => {
+  // 这里需要重置搜索页号
+  searchParams.value = {
+    ...searchParams.value,
+    current: 1,
+  };
+};
+
+// 从表单中获取的用户头像
+let userAvatarImg = userInfo.value?.userAvatar;
+
+/**
+ * 上传头像
+ */
+const uploadAvatar = async () => {
+  const res = await FileControllerService.uploadFileUsingPost(file?.value.file);
+  if (res.code === 0) {
+    userAvatarImg = res.data;
+    Message.success("上传成功，点击确认即可修改头像");
+  } else {
+    Message.error("上传失败！" + res.data);
+  }
+};
+
+/**
+ * 确定修改按钮
+ */
+const handleOk = async () => {
+  const res = await UserControllerService.updateUserUsingPost({
+    ...userInfo.value,
+    userAvatar: userAvatarImg,
+  });
+  if (res.code === 0) {
+    Message.success("更新成功！");
+    visible.value = false;
+    location.reload();
+  } else {
+    Message.error("更新失败！", res.msg);
+  }
+};
+const closeModel = () => {
+  visible.value = false;
+};
+
+const onChange = async (_: never, currentFile: FileItem) => {
+  file.value = {
+    ...currentFile,
+  };
+};
+</script>
+
+<style scoped>
+#userManageView {
+  padding: 5px;
+  box-shadow: 0px 0px 10px rgba(35, 7, 7, 0.21);
+  border-radius: 10px;
+}
+</style>
+```
+
+### 优化提交记录页面
+
+#### 前端
+
+**1、添加刷新按钮**
 
 ```vue
 <a-form-item>
@@ -7667,6 +7941,482 @@ public Boolean updateQuestionById(@RequestBody Question question){
     >刷新
   </a-button>
 </a-form-item>
+```
+
+**2、修改页面**
+
+```vue
+<template #message="{ record }">
+  <a-tag
+    v-if="record.judgeInfo.message === JudgeInfoMessageEnum.ACCEPTED"
+    color="blue"
+    bordered
+  >
+    {{ record.judgeInfo.message }}
+  </a-tag>
+  <a-tag
+    v-else-if="record.judgeInfo.message === JudgeInfoMessageEnum.WAITING"
+    color="green"
+    bordered
+  >
+    {{ record.judgeInfo.message }}
+  </a-tag>
+  <a-tag v-else color="red" bordered>
+    {{ record.judgeInfo.message }}
+  </a-tag>
+</template>
+<template #memory="{ record }">
+  {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }} K
+</template>
+<template #time="{ record }">
+  {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }} ms
+</template>
+<template #status="{ record }">
+  <!-- 0-待判题、1-判题中、2-已判题、3-失败 -->
+  <a-tag v-if="record.status === 0" color="gray">待判题</a-tag>
+  <a-tag v-if="record.status === 1" color="arcoblue">判题中</a-tag>
+  <a-tag v-if="record.status === 2" color="green">已判题</a-tag>
+  <a-tag v-if="record.status === 3" color="red">失败</a-tag>
+</template>
+<template #userName="{ record }">
+  {{ record.userVO?.userName ? record.userVO?.userName : "无名者" }}
+</template>
+<template #createTime="{ record }">
+  {{ moment(record.createTime).format("YYYY-MM-DD hh:mm:ss") }}
+</template>
+```
+
+**3、修改列定义**
+
+```ts
+const columns = [
+  {
+    title: "提交号",
+    dataIndex: "id",
+  },
+  {
+    title: "编程语言",
+    dataIndex: "language",
+  },
+  {
+    title: "判题信息",
+    children: [
+      {
+        title: "判题结果",
+        slotName: "message",
+        width: 100,
+      },
+      {
+        title: "内存消耗",
+        slotName: "memory",
+        width: 100,
+      },
+      {
+        title: "时间消耗",
+        slotName: "time",
+        width: 100,
+      },
+    ],
+  },
+  {
+    title: "提交状态",
+    slotName: "status",
+  },
+  {
+    title: "题号",
+    dataIndex: "questionId",
+  },
+  {
+    title: "提交者",
+    slotName: "userName",
+  },
+  {
+    title: "提交时间",
+    slotName: "createTime",
+  },
+];
+```
+
+**4、添加判题信息枚举**
+
+```ts
+/**
+ * 判题信息枚举
+ */
+const JudgeInfoMessageEnum = {
+  ACCEPTED: "Accepted",
+  WRONG_ANSWER: "Wrong Answer",
+  COMPILE_ERROR: "Compile Error",
+  MEMORY_LIMIT_EXCEEDED: "Memory Limit Exceeded",
+  TIME_LIMIT_EXCEEDED: "Time Limit Exceeded",
+  PRESENTATION_ERROR: "Presentation Error",
+  WAITING: "Waiting",
+  OUTPUT_LIMIT_EXCEEDED: "Output Limit Exceeded",
+  DANGEROUS_OPERATION: "Dangerous Operation",
+  RUNTIME_ERROR: "RunTime Error",
+  SYSTEM_ERROR: "System Error",
+};
+
+export default JudgeInfoMessageEnum;
+```
+
+#### 后端
+
+**修改 `QuestionSubmitServiceImpl` 的 getQuestionSubmitVOPage 方法**
+
+**把用户信息封装到对应的提交记录中**
+
+```java
+@Override
+public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> questionSubmitPage,
+                                                      User loginUser) {
+    List<QuestionSubmit> questionSubmitList = questionSubmitPage.getRecords();
+    Page<QuestionSubmitVO> questionSubmitVOPage = new Page<>(questionSubmitPage.getCurrent(), questionSubmitPage.getSize(), questionSubmitPage.getTotal());
+    if (CollectionUtils.isEmpty(questionSubmitList)) {
+        return questionSubmitVOPage;
+    }
+    // 1. 关联查询用户信息
+    Set<Long> userIdSet = questionSubmitList.stream().map(QuestionSubmit::getUserId).collect(Collectors.toSet());
+    Map<Long, List<User>> userIdUserListMap = userFeighClient.listByIds(userIdSet).stream()
+            .collect(Collectors.groupingBy(User::getId));
+    // 2. 填充信息
+    List<QuestionSubmitVO> questionSubmitVOList = questionSubmitList.stream().map(questionSubmit -> {
+        QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
+        Long userId = questionSubmit.getUserId();
+        User user = null;
+        if (userIdUserListMap.containsKey(userId)) {
+            user = userIdUserListMap.get(userId).get(0);
+        }
+        questionSubmitVO.setUserVO(userFeighClient.getUserVO(user));
+        return questionSubmitVO;
+    }).collect(Collectors.toList());
+    questionSubmitVOPage.setRecords(questionSubmitVOList);
+    return questionSubmitVOPage;
+}
+```
+
+### 优化创建题目页
+
+**1、根据路由展示不同标题**
+
+```vue
+<template #title>
+  <h2 v-if="route.path.startsWith('/update/question')">修改题目</h2>
+  <h2 v-else>创建题目</h2>
+</template>
+```
+
+**2、整体优化**
+
+```vue
+<template>
+  <div id="addQuestionView">
+    <a-card :width="880">
+      <template #title>
+        <h2 v-if="route.path.startsWith('/update/question')">修改题目</h2>
+        <h2 v-else>创建题目</h2>
+      </template>
+      <a-form :model="form" label-align="left">
+        <a-form-item field="title" label="题目标题">
+          <a-input v-model="form.title" placeholder="请输入题目标题" />
+        </a-form-item>
+        <a-form-item field="tags" label="标签">
+          <a-input-tag
+            v-model="form.tags"
+            placeholder="请输入标签"
+            allow-clear
+          />
+        </a-form-item>
+
+        <a-form-item field="content" tooltip="请输入内容" label="题目内容">
+          <MDEditor :value="form.content" :hanndle-change="onContentChange" />
+        </a-form-item>
+
+        <a-form-item field="answer" tooltip="请输入答案" label="题目答案">
+          <MDEditor :value="form.answer" :hanndle-change="onAnswerChange" />
+        </a-form-item>
+        <a-form-item
+          label="判题配置"
+          :content-flex="false"
+          :merge-props="false"
+        >
+          <a-space direction="vertical" style="min-width: 480px">
+            <a-form-item field="judgeConfig.timeLimit" label="时间限制">
+              <a-input-number
+                v-model="form.judgeConfig.timeLimit"
+                placeholder="请输入时间限制"
+                mode="button"
+                min="0"
+                size="large"
+              />
+              ms
+            </a-form-item>
+            <a-form-item field="judgeConfig.timeLimit" label="内存限制">
+              <a-input-number
+                v-model="form.judgeConfig.memoryLimit"
+                placeholder="请输入内存限制"
+                mode="button"
+                min="0"
+                size="large"
+              />
+              KB
+            </a-form-item>
+            <a-form-item field="judgeConfig.timeLimit" label="堆栈限制">
+              <a-input-number
+                v-model="form.judgeConfig.stackLimit"
+                placeholder="请输入堆栈限制"
+                mode="button"
+                min="0"
+                size="large"
+              />
+              KB
+            </a-form-item>
+          </a-space>
+        </a-form-item>
+        <a-form-item
+          label="判题用例"
+          :content-flex="false"
+          :merge-props="false"
+        >
+          <a-form-item
+            v-for="(judgeCase, index) of form.judgeCaseList"
+            :key="index"
+            no-style
+          >
+            <a-space direction="vertical" style="min-width: 480px">
+              <a-form-item
+                :field="`form.judgeCaseList[${index}].input`"
+                :label="`输入用例-${index}`"
+                :key="index"
+              >
+                <a-input v-model="judgeCase.input" placeholder="输入用例" />
+              </a-form-item>
+              <a-form-item
+                :field="`form.judgeCaseList[${index}].output`"
+                :label="`输出用例-${index}`"
+                :key="index"
+              >
+                <a-input v-model="judgeCase.output" placeholder="输出用例" />
+              </a-form-item>
+
+              <a-button @click="handleDelete(index)" status="danger"
+                >删除
+              </a-button>
+            </a-space>
+          </a-form-item>
+          <div style="margin-top: 32px">
+            <a-button @click="handleAdd" type="outline" status="success"
+              >新增测试用例
+            </a-button>
+          </div>
+        </a-form-item>
+        <div style="margin-top: 16px"></div>
+        <a-form-item>
+          <a-button
+            type="primary"
+            style="min-width: 200px"
+            @click="handleSubmit"
+            >提交
+          </a-button>
+        </a-form-item>
+      </a-form>
+    </a-card>
+  </div>
+</template>
+```
+
+**3、样式**
+
+```vue
+#addQuestionView {
+  max-width: 840px;
+  margin: auto;
+}
+```
+
+
+
+### 优化题目管理页
+
+**1、去除内容和答案字段(内容和答案一般比较长，不适合放在列表页查看），去除判题用例、修改时间、点赞数、收藏数字段**
+
+**2、优化标签展示样式**
+
+```vue
+<template #tags="{ record }">
+  <a-space wrap>
+    <a-tag
+      v-for="(tag, index) of JSON.parse(record.tags)"
+      :key="index"
+      color="green"
+      >{{ tag }}
+    </a-tag>
+  </a-space>
+</template>
+```
+
+**3、优化判题配置展示样式**
+
+```ts
+res.data.records.map((record: any) => {
+  const judgeConfig = JSON.parse(record.judgeConfig)
+  record["timeLimit"] = judgeConfig.timeLimit;
+  record["memoryLimit"] = judgeConfig.memoryLimit;
+  record["stackLimit"] = judgeConfig.stackLimit;
+  return record;
+});
+```
+
+```ts
+const columns = [
+  {
+    title: "id",
+    dataIndex: "id",
+    width: 190,
+  },
+  {
+    title: "题目",
+    dataIndex: "title",
+    width: 180,
+  },
+  /*  {
+      title: "内容",
+      dataIndex: "content",
+    },*/
+  {
+    title: "标签",
+    slotName: "tags",
+    width: 240,
+  },
+  /*  {
+      title: "答案",
+      dataIndex: "answer",
+    },*/
+  {
+    title: "提交数",
+    dataIndex: "submitNum",
+    width: 90,
+  },
+  {
+    title: "通过数",
+    dataIndex: "acceptedNum",
+    width: 90,
+  },
+  {
+    title: "判题配置",
+    dataIndex: "judgeConfig",
+    children: [
+      {
+        title: "时间限制",
+        dataIndex: "timeLimit",
+        width: 100,
+      },
+      {
+        title: "内存限制",
+        dataIndex: "memoryLimit",
+        width: 100,
+      },
+      {
+        title: "堆栈限制",
+        dataIndex: "stackLimit",
+        width: 100,
+      },
+    ],
+    width: 300,
+  },
+  {
+    title: "创建者",
+    dataIndex: "userId",
+  },
+  {
+    title: "创建时间",
+    slotName: "createTime",
+    width: 110,
+  },
+  {
+    title: "操作",
+    slotName: "optional",
+  },
+];
+```
+
+**3、添加搜索框**
+
+```vue
+<a-form
+  :model="searchParams"
+  layout="inline"
+  style="justify-content: center; align-content: center; margin: 25px"
+>
+  <a-form-item field="title" label="题目名称：" tooltip="请输入题目名称">
+    <a-input
+      v-model="searchParams.title"
+      placeholder="请输入题目名称"
+      style="min-width: 280px"
+    />
+  </a-form-item>
+  <a-form-item field="tags" label="标签" tooltip="请输入题目标签">
+    <a-input-tag
+      v-model="searchParams.tags"
+      placeholder="请输入标签"
+      style="min-width: 280px"
+    />
+  </a-form-item>
+  <a-form-item>
+    <a-button type="outline" shape="round" status="normal" @click="doSearch"
+      >搜 索
+    </a-button>
+  </a-form-item>
+</a-form>
+```
+
+```ts
+const searchParams = ref({
+  title: "",
+  tags: [],
+  pageSize: 10,
+  current: 1,
+});
+
+const doSearch = () => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: 1,
+  };
+  // loadData();
+};
+```
+
+**4、添加每页大小选择**
+
+```vue
+<a-table
+  :columns="columns"
+  :data="dataList"
+  :pagination="{
+    showTotal: true,
+    current: searchParams.current,
+    pageSize: searchParams.pageSize,
+    total,
+    showJumper: true,
+    showPageSize: true,
+  }"
+  @page-change="onPageChange"
+  @pageSizeChange="onPageSizeChange"
+>
+```
+
+```ts
+/**
+ * 页面大小切换
+ * @param size
+ */
+const onPageSizeChange = (size: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    pageSize: size,
+  };
+};
 ```
 
 
@@ -8670,6 +9420,185 @@ onMounted(async () => {
   // console.log(res);
 });
 ```
+
+
+
+### 死信队列,避免消息积压
+
+**启动项目前，建议先把原来的工作队列删除，这样新配置才会生效**
+
+**1、judge-service `InitRabbitMq`工作队列、工作交换机、死信队列、死信交换机初始化**
+
+```java
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import lombok.extern.slf4j.Slf4j;
+
+import java.util.HashMap;
+import java.util.Map;
+@Slf4j
+public class InitRabbitMq {
+    private static final String EXCHANGE_NAME = "oj_exchange";
+    private static final String QUEUE_NAME = "oj_queue";
+    private static final String ROUTING_KEY = "oj_routingKey";
+    private static final String DLX_EXCHANGE_NAME = "oj_dlx_exchange";
+    private static final String DLX_QUEUE_NAME = "oj_dlx_queue";
+    private static final String DLX_ROUTING_KEY = "oj_dlx_routingKey";
+
+    public static void doInit() {
+        try {
+            ConnectionFactory connectionFactory = new ConnectionFactory();
+            connectionFactory.setHost("localhost");
+            Connection connection = connectionFactory.newConnection();
+            Channel channel = connection.createChannel();
+            // 指定死信参数
+            Map<String, Object> args = new HashMap<>();
+            // 指定死信交换机
+            args.put("x-dead-letter-exchange", DLX_EXCHANGE_NAME);
+            // 指定死信要转发到哪个队列
+            args.put("x-dead-letter-routing-key", DLX_ROUTING_KEY);
+            // 创建死信交换机
+            channel.exchangeDeclare(DLX_EXCHANGE_NAME, "direct");
+
+            // 创建工作交换机
+            channel.exchangeDeclare(EXCHANGE_NAME, "direct");
+            // 创建工作队列
+            channel.queueDeclare(QUEUE_NAME, true, false, false, args);
+            // 工作队列绑定工作交换机
+            channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, ROUTING_KEY);
+
+            // 创建死信队列
+            channel.queueDeclare(DLX_QUEUE_NAME, true, false, false, null);
+            // 绑定死信交换机，指定路由键
+            channel.queueBind(DLX_QUEUE_NAME, DLX_EXCHANGE_NAME, DLX_ROUTING_KEY);
+
+            log.info("消息队列启动成功");
+        } catch (Exception e) {
+            log.error("消息队列启动失败");
+        }
+    }
+
+    public static void main(String[] args) {
+        doInit();
+    }
+}
+```
+
+**2、judge-service 定义死信队列的消费者 `FailMessageConsumer`**
+
+```java
+/**
+ * 判题死信队列
+ * @author 落樱的悔恨 
+ */
+@Component
+@Slf4j
+public class FailMessageConsumer {
+
+    @Resource
+    private QuestionFeignClient questionFeignClient;
+
+    private static final String DLX_QUEUE_NAME = "oj_dlx_queue";
+
+    /**
+     * 监听死信队列
+     *
+     * @param message
+     * @param channel
+     * @param deliveryTag
+     */
+    @SneakyThrows
+    @RabbitListener(queues = {DLX_QUEUE_NAME}, ackMode = "MANUAL")
+    public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) {
+        // 接收到失败的信息
+        log.info("死信队列接受到的消息：{}", message);
+        if (StringUtils.isBlank(message)) {
+            channel.basicNack(deliveryTag, false, false);
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "消息为空");
+        }
+        long questionSubmitId = Long.parseLong(message);
+        QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+        if (questionSubmit == null) {
+            channel.basicNack(deliveryTag, false, false);
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "提交的题目信息不存在");
+        }
+        // 把提交状态修改为失败
+        questionSubmit.setStatus(QuestionSubmitStatusEnum.FAILURE.getValue());
+
+        boolean update = questionFeignClient.updateQuestionSubmitById(questionSubmit);
+        if (!update) {
+            log.info("处理死信队列消息失败,对应提交的题目id为:{}", questionSubmit.getId());
+            channel.basicNack(deliveryTag, false, false);
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "处理死信队列消息失败");
+        }
+        // 确认消息
+        channel.basicAck(deliveryTag, false);
+    }
+}
+```
+
+**3、judge-service `MessageConsumer`添加消息判空处理**
+
+```java
+@Component
+@Slf4j
+public class MessageConsumer {
+
+    @Resource
+    private JudgeService judgeService;
+
+    @Resource
+    private QuestionFeignClient questionFeignClient;
+    
+    private static final String QUEUE_NAME = "oj_queue";
+    //指定程序监听的消息队列和确认机制
+    @RabbitListener(queues = {QUEUE_NAME}, ackMode = "MANUAL")
+    public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+            throws IOException {
+        log.info("receiveMessage message={}", message);
+        long questionSubmitId = Long.parseLong(message);
+        if (message == null) {
+            // 消息为空，则拒绝消息（不重试），进入死信队列
+            channel.basicNack(deliveryTag, false, false);
+            throw new BusinessException(ErrorCode.NULL_ERROR, "消息为空");
+        }
+        try {
+            // 判题
+            judgeService.doJudge(questionSubmitId);
+            // 判断是否判题成功且通过
+            QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+            QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
+            String judgeMessage = questionSubmitVO.getJudgeInfo().getMessage();
+            if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())
+                    || !JudgeInfoMessagenum.ACCEPTED.equals(JudgeInfoMessagenum.getEnumByValue(judgeMessage))) {
+                channel.basicNack(deliveryTag, false, false);
+                throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
+            }
+            // 设置通过数
+            Long questionId = questionSubmit.getQuestionId();
+            Question question = questionFeignClient.getQuestionById(questionId);
+            Integer acceptedNum = question.getAcceptedNum();
+            Question updateQuestion = new Question();
+            synchronized (question.getAcceptedNum()) {
+                acceptedNum = acceptedNum + 1;
+                updateQuestion.setId(questionId);
+                updateQuestion.setAcceptedNum(acceptedNum);
+                boolean save = questionFeignClient.updateQuestionById(updateQuestion);
+                if (!save) {
+                    throw new BusinessException(ErrorCode.OPERATION_ERROR, "保存数据失败");
+                }
+            }
+            // 确认消息
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            channel.basicNack(deliveryTag, false, false);
+        }
+    }
+}
+```
+
+
 
 ## 扩展思路
 

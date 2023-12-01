@@ -8060,6 +8060,78 @@ const JudgeInfoMessageEnum = {
 export default JudgeInfoMessageEnum;
 ```
 
+**5、添加每页大小选择和页面跳转**
+
+```vue
+<a-table
+  :columns="columns"
+  :data="dataList"
+  :pagination="{
+    showTotal: true,
+    current: searchParams.current,
+    pageSize: searchParams.pageSize,
+    total,
+    showJumper: true,
+    showPageSize: true,
+  }"
+  @page-change="onPageChange"
+  @pageSizeChange="onPageSizeChange"
+>
+```
+
+```ts
+/**
+ * 页面大小切换
+ * @param size
+ */
+const onPageSizeChange = (size: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    pageSize: size,
+  };
+};
+```
+
+**6、修改搜索框样式**
+
+```vue
+<a-form
+  :model="searchParams"
+  layout="inline"
+  style="justify-content: center; align-content: center; margin: 25px"
+>
+  <a-form-item field="questionId" label="题号" tooltip="请输入题号">
+    <a-input
+      v-model="searchParams.questionId"
+      placeholder="请输入题号"
+      style="min-width: 280px"
+    />
+  </a-form-item>
+  <a-form-item field="language" label="编程语言" tooltip="请选择编程语言">
+    <a-select
+      v-model="searchParams.language"
+      :style="{ width: '320px' }"
+      placeholder="请选择语言"
+    >
+      <a-option>java</a-option>
+      <a-option>cpp</a-option>
+    </a-select>
+  </a-form-item>
+  <a-form-item>
+    <a-button type="outline" shape="round" status="normal" @click="doSearch"
+      >搜索
+    </a-button>
+  </a-form-item>
+  <a-form-item>
+    <a-button type="outline" shape="round" status="normal" @click="loadData"
+      >刷新
+    </a-button>
+  </a-form-item>
+</a-form>
+```
+
+
+
 #### 后端
 
 **修改 `QuestionSubmitServiceImpl` 的 getQuestionSubmitVOPage 方法**
@@ -8286,7 +8358,7 @@ const columns = [
   {
     title: "标签",
     slotName: "tags",
-    width: 240,
+    width: 20,
   },
   /*  {
       title: "答案",
@@ -8322,10 +8394,13 @@ const columns = [
         width: 100,
       },
     ],
-    width: 300,
   },
+  /*  {
+      title: "判题用例",
+      dataIndex: "judgeCase",
+    },*/
   {
-    title: "创建者",
+    title: "创建者id",
     dataIndex: "userId",
   },
   {
@@ -8336,6 +8411,7 @@ const columns = [
   {
     title: "操作",
     slotName: "optional",
+    width: 80,
   },
 ];
 ```
@@ -8387,7 +8463,7 @@ const doSearch = () => {
 };
 ```
 
-**4、添加每页大小选择**
+**4、添加每页大小选择和页面跳转**
 
 ```vue
 <a-table
@@ -8417,6 +8493,125 @@ const onPageSizeChange = (size: number) => {
     pageSize: size,
   };
 };
+```
+
+**5、优化操作选项**
+
+**如果使用气泡确认框 `a-popconfirm` 报错  `ResizeObserver loop completed with undelivered notifications`，可能是未设置宽度**
+
+```vue
+<template #optional="{ record }">
+  <a-space>
+    <a-button type="outline" shape="round" @click="doUpdate(record)"
+      >修改
+    </a-button>
+    <a-popconfirm
+      content="确定要删除此题目吗?"
+      style="width: 180px"
+      type="error"
+      okText="是"
+      cancelText="否"
+      @cancel="
+        () => {
+          message.warning(`已取消`);
+        }
+      "
+      @ok="doDelete(record)"
+    >
+      <a-button shape="round" type="outline" status="danger"
+        >删除
+      </a-button>
+    </a-popconfirm>
+  </a-space>
+</template>
+```
+
+
+
+### 优化浏览题目页
+
+**1、添加每页大小选择和页面跳转**
+
+```vue
+<a-table
+  :columns="columns"
+  :data="dataList"
+  :pagination="{
+    showTotal: true,
+    current: searchParams.current,
+    pageSize: searchParams.pageSize,
+    total,
+    showJumper: true,
+    showPageSize: true,
+  }"
+  @page-change="onPageChange"
+  @pageSizeChange="onPageSizeChange"
+>
+```
+
+```ts
+/**
+ * 页面大小切换
+ * @param size
+ */
+const onPageSizeChange = (size: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    pageSize: size,
+  };
+};
+```
+
+**2、`浏览题目`改为``题库`**
+
+```ts
+{
+  path: "/questions",
+  name: "题库",
+  component: QuestionsView,
+},
+```
+
+**3、修改做题按钮样式**
+
+```vue
+<template #optional="{ record }">
+  <a-space>
+    <a-button type="outline" shape="round" @click="toDoQuestion(record)"
+      >做题
+    </a-button>
+  </a-space>
+</template>
+```
+
+**4、修改搜索框样式**
+
+```vue
+<a-form
+  :model="searchParams"
+  layout="inline"
+  style="justify-content: center; align-content: center; margin: 25px"
+>
+  <a-form-item field="title" label="题目名称" tooltip="请输入题目名称">
+    <a-input
+      v-model="searchParams.title"
+      placeholder="请输入题目名称"
+      style="min-width: 280px"
+    />
+  </a-form-item>
+  <a-form-item field="tags" label="标签" tooltip="请输入题目标签">
+    <a-input-tag
+      v-model="searchParams.tags"
+      placeholder="请输入标签"
+      style="min-width: 280px"
+    />
+  </a-form-item>
+  <a-form-item>
+    <a-button type="outline" shape="round" status="normal" @click="doSearch"
+      >搜索
+    </a-button>
+  </a-form-item>
+</a-form>
 ```
 
 

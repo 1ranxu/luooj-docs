@@ -6922,6 +6922,19 @@ const logout = async () => {
 
 
 
+### 优化底部样式
+
+```vue
+<a-layout-footer class="footer">
+  <a-link href="https://github.com/1ranxu" target="_blank">
+    <icon-github />
+  </a-link>
+  LUOYINGDEHUIHEN出品
+</a-layout-footer>
+```
+
+
+
 ### 优化注册页面
 
 1、添加校验规则
@@ -8261,14 +8274,22 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
                 :label="`输入用例-${index}`"
                 :key="index"
               >
-                <a-input v-model="judgeCase.input" placeholder="输入用例" />
+                <a-textarea
+                  v-model="judgeCase.input"
+                  placeholder="输入用例"
+                  allow-clear
+                />
               </a-form-item>
               <a-form-item
                 :field="`form.judgeCaseList[${index}].output`"
                 :label="`输出用例-${index}`"
                 :key="index"
               >
-                <a-input v-model="judgeCase.output" placeholder="输出用例" />
+                <a-textarea
+                  v-model="judgeCase.output"
+                  placeholder="输出用例"
+                  allow-clear
+                />
               </a-form-item>
 
               <a-button @click="handleDelete(index)" status="danger"

@@ -6713,6 +6713,8 @@ OpenAPI.BASE = baseUrl;
 console.log("当前环境：", process.env.NODE_ENV, "请求地址", baseUrl);
 ```
 
+
+
 ### Docker代码沙箱使用流程优化
 
 - 判断镜像是否存在
@@ -6768,6 +6770,8 @@ if (containerOptional.isPresent()){
 }
 ```
 
+
+
 ### 代码沙箱模板方法优化
 
 代码沙箱在执行 java 代码的过程中，会先编译出.class文件，再运行，最后删除.class文件及其父目录
@@ -6803,6 +6807,8 @@ try {
 }
 return executeCodeResponse;
 ```
+
+
 
 ### 优化右上角样式
 
@@ -7483,44 +7489,76 @@ synchronized (question.getSubmitNum()) {
 消息队列的消费者中设置通过数，只有通过了判题服务，得到 `Accept` 结果，才算提交通过
 
 ```java
-@Resource
-private QuestionFeignClient questionFeignClient;
-//指定程序监听的消息队列和确认机制
-@RabbitListener(queues = {"oj_queue"}, ackMode = "MANUAL")
-public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
-        throws IOException {
-    log.info("receiveMessage message={}", message);
-    long questionSubmitId = Long.parseLong(message);
-    try {
-        // 判题
-        judgeService.doJudge(questionSubmitId);
-        // 判断是否判题成功且通过
-        QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
-        QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
-        String judgeMessage = questionSubmitVO.getJudgeInfo().getMessage();
-        if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())
-                || !JudgeInfoMessagenum.ACCEPTED.equals(JudgeInfoMessagenum.getEnumByValue(judgeMessage))) {
-            channel.basicNack(deliveryTag, false, false);
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
-        }
-        // 设置通过数
-        Long questionId = questionSubmit.getQuestionId();
-        Question question = questionFeignClient.getQuestionById(questionId);
-        Integer acceptedNum = question.getAcceptedNum();
-        Question updateQuestion = new Question();
-        synchronized (question.getAcceptedNum()) {
-            acceptedNum = acceptedNum + 1;
-            updateQuestion.setId(questionId);
-            updateQuestion.setAcceptedNum(acceptedNum);
-            boolean save = questionFeignClient.updateQuestionById(updateQuestion);
-            if (!save) {
-                throw new BusinessException(ErrorCode.OPERATION_ERROR, "保存数据失败");
+import com.luoying.luoojbackendcommon.common.ErrorCode;
+import com.luoying.luoojbackendcommon.exception.BusinessException;
+import com.luoying.luoojbackendjudgeservice.judge.JudgeService;
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.entity.QuestionSubmit;
+import com.luoying.luoojbackendmodel.enums.JudgeInfoMessagenum;
+import com.luoying.luoojbackendmodel.enums.QuestionSubmitStatusEnum;
+import com.luoying.luoojbackendmodel.vo.QuestionSubmitVO;
+import com.luoying.luoojbackendserviceclient.service.QuestionFeignClient;
+import com.rabbitmq.client.Channel;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.Resource;
+import java.io.IOException;
+
+
+@Component
+@Slf4j
+public class MessageConsumer {
+
+    @Resource
+    private JudgeService judgeService;
+
+    @Resource
+    private QuestionFeignClient questionFeignClient;
+
+    private static final String QUEUE_NAME = "oj_queue";
+
+    //指定程序监听的消息队列和确认机制
+    @RabbitListener(queues = {QUEUE_NAME}, ackMode = "MANUAL")
+    public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+            throws IOException {
+        log.info("receiveMessage message={}", message);
+        long questionSubmitId = Long.parseLong(message);
+        try {
+            // 判题
+            judgeService.doJudge(questionSubmitId);
+            // 判断是否判题成功且通过
+            QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+            QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
+            if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())) {
+                throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
             }
+            // 设置通过数
+            if (!JudgeInfoMessagenum.ACCEPTED.getValue().equals(questionSubmitVO.getJudgeInfo().getMessage())) {
+                channel.basicAck(deliveryTag, false);
+                return;
+            }
+            Long questionId = questionSubmit.getQuestionId();
+            Question question = questionFeignClient.getQuestionById(questionId);
+            Integer acceptedNum = question.getAcceptedNum();
+            Question updateQuestion = new Question();
+            synchronized (question.getAcceptedNum()) {
+                acceptedNum = acceptedNum + 1;
+                updateQuestion.setId(questionId);
+                updateQuestion.setAcceptedNum(acceptedNum);
+                boolean save = questionFeignClient.updateQuestionById(updateQuestion);
+                if (!save) {
+                    throw new BusinessException(ErrorCode.OPERATION_ERROR, "保存数据失败");
+                }
+            }
+            // 确认消息
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            channel.basicNack(deliveryTag, false, false);
         }
-        // 确认消息
-        channel.basicAck(deliveryTag, false);
-    } catch (Exception e) {
-        channel.basicNack(deliveryTag, false, false);
     }
 }
 ```
@@ -7956,46 +7994,109 @@ const onChange = async (_: never, currentFile: FileItem) => {
 </a-form-item>
 ```
 
-**2、修改页面**
+**2、修改页面（更好的展示）**
 
 ```vue
-<template #message="{ record }">
-  <a-tag
-    v-if="record.judgeInfo.message === JudgeInfoMessageEnum.ACCEPTED"
-    color="blue"
-    bordered
-  >
-    {{ record.judgeInfo.message }}
-  </a-tag>
-  <a-tag
-    v-else-if="record.judgeInfo.message === JudgeInfoMessageEnum.WAITING"
-    color="green"
-    bordered
-  >
-    {{ record.judgeInfo.message }}
-  </a-tag>
-  <a-tag v-else color="red" bordered>
-    {{ record.judgeInfo.message }}
-  </a-tag>
-</template>
-<template #memory="{ record }">
-  {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }} K
-</template>
-<template #time="{ record }">
-  {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }} ms
-</template>
-<template #status="{ record }">
-  <!-- 0-待判题、1-判题中、2-已判题、3-失败 -->
-  <a-tag v-if="record.status === 0" color="gray">待判题</a-tag>
-  <a-tag v-if="record.status === 1" color="arcoblue">判题中</a-tag>
-  <a-tag v-if="record.status === 2" color="green">已判题</a-tag>
-  <a-tag v-if="record.status === 3" color="red">失败</a-tag>
-</template>
-<template #userName="{ record }">
-  {{ record.userVO?.userName ? record.userVO?.userName : "无名者" }}
-</template>
-<template #createTime="{ record }">
-  {{ moment(record.createTime).format("YYYY-MM-DD hh:mm:ss") }}
+<template>
+  <div id="questionSubmitView">
+    <a-form
+      :model="searchParams"
+      layout="inline"
+      style="justify-content: center; align-content: center; margin: 25px"
+    >
+      <a-form-item field="questionId" label="题号" tooltip="请输入题号">
+        <a-input
+          v-model="searchParams.questionId"
+          placeholder="请输入题号"
+          style="min-width: 280px"
+        />
+      </a-form-item>
+      <a-form-item field="language" label="编程语言" tooltip="请选择编程语言">
+        <a-select
+          v-model="searchParams.language"
+          :style="{ width: '320px' }"
+          placeholder="请选择语言"
+        >
+          <a-option>java</a-option>
+          <a-option>cpp</a-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item>
+        <a-button type="outline" shape="round" status="normal" @click="doSearch"
+          >搜索
+        </a-button>
+      </a-form-item>
+      <a-form-item>
+        <a-button type="outline" shape="round" status="normal" @click="loadData"
+          >刷新
+        </a-button>
+      </a-form-item>
+    </a-form>
+    <a-divider size="0" />
+    <a-table
+      :columns="columns"
+      :data="dataList"
+      :pagination="{
+        showTotal: true,
+        current: searchParams.current,
+        pageSize: searchParams.pageSize,
+        total,
+        showJumper: true,
+        showPageSize: true,
+      }"
+      @page-change="onPageChange"
+      @pageSizeChange="onPageSizeChange"
+    >
+      <template #message="{ record }">
+        <a-tag
+          v-if="record.judgeInfo.message === JudgeInfoMessageEnum.ACCEPTED"
+          color="blue"
+          bordered
+        >
+          {{ record.judgeInfo.message }}
+        </a-tag>
+        <a-tag
+          v-else-if="record.judgeInfo.message === JudgeInfoMessageEnum.WAITING"
+          color="green"
+          bordered
+        >
+          {{ record.judgeInfo.message }}
+        </a-tag>
+        <a-tag v-else color="red" bordered>
+          {{ record.judgeInfo.message }}
+        </a-tag>
+      </template>
+      <template #memory="{ record }">
+        {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }} K
+      </template>
+
+      <template #time="{ record }">
+        {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }} ms
+      </template>
+
+      <template #status="{ record }">
+        <!-- 0-待判题、1-判题中、2-已判题、3-失败 -->
+        <a-tag v-if="record.status === 0" color="gray">待判题</a-tag>
+        <a-tag v-if="record.status === 1" color="arcoblue">判题中</a-tag>
+        <a-tag v-if="record.status === 2" color="green">已判题</a-tag>
+        <a-tag v-if="record.status === 3" color="red">失败</a-tag>
+      </template>
+
+      <template #questionTitle="{ record }">
+        <a-button type="text" @click="toDoQuestion(record.questionVO)"
+          >{{ record.questionVO.title }}
+        </a-button>
+      </template>
+
+      <template #userName="{ record }">
+        {{ record.userVO?.userName ? record.userVO?.userName : "无名者" }}
+      </template>
+
+      <template #createTime="{ record }">
+        {{ moment(record.createTime).format("YYYY-MM-DD hh:mm:ss") }}
+      </template>
+    </a-table>
+  </div>
 </template>
 ```
 
@@ -8036,8 +8137,8 @@ const columns = [
     slotName: "status",
   },
   {
-    title: "题号",
-    dataIndex: "questionId",
+    title: "题目",
+    slotName: "questionTitle",
   },
   {
     title: "提交者",
@@ -8149,7 +8250,7 @@ const onPageSizeChange = (size: number) => {
 
 **修改 `QuestionSubmitServiceImpl` 的 getQuestionSubmitVOPage 方法**
 
-**把用户信息封装到对应的提交记录中**
+**把用户信息UserVO和题目信息QuestionVO封装到对应的提交记录QuestionSubmitVO中**
 
 ```java
 @Override
@@ -8164,15 +8265,25 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
     Set<Long> userIdSet = questionSubmitList.stream().map(QuestionSubmit::getUserId).collect(Collectors.toSet());
     Map<Long, List<User>> userIdUserListMap = userFeighClient.listByIds(userIdSet).stream()
             .collect(Collectors.groupingBy(User::getId));
-    // 2. 填充信息
+    // 2. 关联查询题目信息
+    Set<Long> questionIdSet = questionSubmitList.stream().map(QuestionSubmit::getQuestionId).collect(Collectors.toSet());
+    Map<Long, List<Question>> questionIdUserListMap = questionService.listByIds(questionIdSet).stream()
+            .collect(Collectors.groupingBy(Question::getId));
+    // 3. 填充信息
     List<QuestionSubmitVO> questionSubmitVOList = questionSubmitList.stream().map(questionSubmit -> {
         QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
         Long userId = questionSubmit.getUserId();
+        Long questionId = questionSubmit.getQuestionId();
         User user = null;
+        Question question = null;
         if (userIdUserListMap.containsKey(userId)) {
             user = userIdUserListMap.get(userId).get(0);
         }
+        if (questionIdUserListMap.containsKey(questionId)) {
+            question = questionIdUserListMap.get(questionId).get(0);
+        }
         questionSubmitVO.setUserVO(userFeighClient.getUserVO(user));
+        questionSubmitVO.setQuestionVO(QuestionVO.objToVo(question));
         return questionSubmitVO;
     }).collect(Collectors.toList());
     questionSubmitVOPage.setRecords(questionSubmitVOList);
@@ -8679,6 +8790,8 @@ if (!rateLimiter.tryAcquire()){
 
 ![image-20231121180610610](assets/image-20231121180610610.png)
 
+
+
 ### Sentinel限流
 
 官方文档：https://sentinelguard.io/zh-cn/docs/metrics.html
@@ -8767,6 +8880,8 @@ private static void initFlowRules(){
 ```
 
 ![image-20231123153455879](assets/image-20231123153455879.png)
+
+
 
 ### JWT鉴权
 
@@ -9073,6 +9188,8 @@ const handleSubmit = async () => {
 **问题：**之前的代码沙箱模板中，编译代码、执行代码的命令都是写死的，是为java定制的。
 
 **解决：**提供getCmd抽象方法，交由子类实现，可以根据不同语言提供不同的命令
+
+**问题：**编译代码，运行代码时出现的异常信息未封装进ExecuteCodeResponse，导致前端无法展示异常信息
 
 #### 解决命令写死问题
 
@@ -9409,6 +9526,520 @@ public class ProcessUtil {
 }
 ```
 
+#### 解决异常信息未封装的问题
+
+##### 修改代码沙箱模板
+
+```java
+import org.apache.commons.lang3.ObjectUtils;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * 判题信息消息枚举
+ */
+public enum JudgeInfoMessagenum {
+
+    ACCEPTED("通过", "Accepted"),
+    WRONG_ANSWER("答案错误", "Wrong Answer"),
+    COMPILE_ERROR("编译错误", "Compile Error"),
+    MEMORY_LIMIT_EXCEEDED("内存超限", "Memory Limit Exceeded"),
+    TIME_LIMIT_EXCEEDED("时间超限", "Time Limit Exceeded"),
+    PRESENTATION_ERROR("展示错误", "Presentation Error"),
+    WAITING("等待中", "Waiting"),
+    OUTPUT_LIMIT_EXCEEDED("输出溢出", "Output Limit Exceeded"),
+    DANGEROUS_OPERATION("危险操作", "Dangerous Operation"),
+    RUNTIME_ERROR("运行错误", "RunTime Error"),
+    SYSTEM_ERROR("系统错误", "System Error");
+
+    private final String text;
+
+    private final String value;
+
+    JudgeInfoMessagenum(String text, String value) {
+        this.text = text;
+        this.value = value;
+    }
+
+    /**
+     * 获取值列表
+     *
+     * @return
+     */
+    public static List<String> getValues() {
+        return Arrays.stream(values()).map(item -> item.value).collect(Collectors.toList());
+    }
+
+    /**
+     * 根据 value 获取枚举
+     *
+     * @param value
+     * @return
+     */
+    public static JudgeInfoMessagenum getEnumByValue(String value) {
+        if (ObjectUtils.isEmpty(value)) {
+            return null;
+        }
+        for (JudgeInfoMessagenum anEnum : JudgeInfoMessagenum.values()) {
+            if (anEnum.value.equals(value)) {
+                return anEnum;
+            }
+        }
+        return null;
+    }
+
+    public String getValue() {
+        return value;
+    }
+
+    public String getText() {
+        return text;
+    }
+}
+```
+
+```java
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.dfa.FoundWord;
+import cn.hutool.dfa.WordTree;
+import com.luoying.core.CodeSandBox;
+import com.luoying.model.*;
+import com.luoying.model.enums.JudgeInfoMessagenum;
+import com.luoying.utils.ProcessUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StopWatch;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * 代码沙箱模板
+ * 注意每个实现类必须自定义代码存放路径
+ */
+@Slf4j
+public abstract class CodeSandBoxTemplate implements CodeSandBox {
+    // 所有用户代码的根目录
+    String globalCodeDirPath;
+    // 对不同语言进行分类存储
+    String prefix;
+    // 代码文件名
+    String globalCodeFileName;
+    // 超时时间
+    private static final long TIMEOUT = 5000L;
+
+    private static final WordTree WORD_TREE;
+
+    static {
+        WORD_TREE = new WordTree();
+        WORD_TREE.addWords("Files", "exec");
+    }
+
+    protected CodeSandBoxTemplate(String globalCodeDirPath, String prefix, String globalCodeFileName) {
+        this.globalCodeDirPath = globalCodeDirPath;
+        this.prefix = prefix;
+        this.globalCodeFileName = globalCodeFileName;
+    }
+
+
+    /**
+     * 每个实现类必须实现编译以及运行的cmd
+     *
+     * @param userCodeParentPath 用户代码父目录的绝对路径
+     * @param userCodePath       用户代码文件的绝对路径
+     * @return {@link CodeSandBoxCmd}
+     */
+    protected abstract CodeSandBoxCmd getCmd(String userCodeParentPath,
+                                             String userCodePath);
+
+
+    @Override
+    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
+        StopWatch watch = new StopWatch();
+        watch.start();
+        File userCodeFile = null;
+        ExecuteCodeResponse executeCodeResponse = null;
+        QuestionSubmitJudgeInfo judgeInfo = null;
+        try {
+            List<String> inputList = executeCodeRequest.getInputList();
+            String code = executeCodeRequest.getCode();
+            // 1. 把用户的代码保存为文件
+            try {
+                userCodeFile = saveCodeToFile(code);
+            } catch (Exception e) {
+                watch.stop();
+                judgeInfo = new QuestionSubmitJudgeInfo();
+                judgeInfo.setMessage(JudgeInfoMessagenum.DANGEROUS_OPERATION.getValue());
+                judgeInfo.setTime(watch.getLastTaskTimeMillis());
+
+                return ExecuteCodeResponse.builder()
+                        .message(JudgeInfoMessagenum.DANGEROUS_OPERATION.getValue())
+                        .judgeInfo(judgeInfo)
+                        .build();
+            }
+
+            String userCodePath = userCodeFile.getAbsolutePath();
+            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+
+            CodeSandBoxCmd sandBoxCmd = getCmd(userCodeParentPath, userCodePath);
+            String compileCmd = sandBoxCmd.getCompileCmd();
+            String runCmd = sandBoxCmd.getRunCmd();
+            // 2. 编译代码
+            ExecuteMessage compileCodeFileExecuteMessage = compileCode(compileCmd);
+            if (compileCodeFileExecuteMessage.getExitValue() != 0) {
+                log.info("编译信息：{}", compileCodeFileExecuteMessage);
+                watch.stop();
+                judgeInfo = new QuestionSubmitJudgeInfo();
+                judgeInfo.setMessage(JudgeInfoMessagenum.COMPILE_ERROR.getValue());
+                judgeInfo.setTime(watch.getLastTaskTimeMillis());
+
+                return ExecuteCodeResponse.builder()
+                        .message(compileCodeFileExecuteMessage.getErrorMessage())
+                        .judgeInfo(judgeInfo)
+                        .build();
+            }
+            // 3. 执行代码，得到输出结果
+            List<ExecuteMessage> executeMessageList = runCode(inputList, runCmd);
+            for (ExecuteMessage executeMessage : executeMessageList) {
+                if (executeMessage.getExitValue() != 0) {
+                    watch.stop();
+                    judgeInfo = new QuestionSubmitJudgeInfo();
+                    judgeInfo.setMessage(JudgeInfoMessagenum.RUNTIME_ERROR.getValue());
+                    judgeInfo.setTime(watch.getLastTaskTimeMillis());
+
+                    return ExecuteCodeResponse.builder()
+                            .message(executeMessage.getErrorMessage())
+                            .judgeInfo(judgeInfo)
+                            .build();
+                }
+            }
+            // 4. 收集整理输出结果
+            executeCodeResponse = getOutputResponse(executeMessageList);
+        } catch (
+                Exception e) {
+            log.info(e.getMessage());
+        } finally {
+            // 5. 文件清理，释放空间
+            boolean b = deleteFile(userCodeFile);
+            if (!b) {
+                log.error("deleteFile error userCodeFilePath={}", userCodeFile.getAbsolutePath());
+            }
+        }
+        return executeCodeResponse;
+    }
+
+
+    /**
+     * 1. 保存用户代码到文件中
+     * 保存到文件中的格式应为: tempCode/language/UUID/代码文件
+     *
+     * @param code 代码
+     * @return
+     */
+    private File saveCodeToFile(String code) {
+        FoundWord foundWord = WORD_TREE.matchWord(code);
+        if (foundWord != null) {
+            throw new RuntimeException("危险操作");
+        }
+        // 所有用户代码的根目录
+        String userDir = System.getProperty("user.dir");
+        String globalCodePath = userDir + File.separator + globalCodeDirPath;
+        if (!FileUtil.exist(globalCodePath)) {
+            FileUtil.mkdir(globalCodePath);
+        }
+        // 存放用户代码的具体目录，通过prefix区分不同语言
+        String userCodeParentPath = globalCodePath + File.separator + prefix + File.separator + UUID.randomUUID();
+        // 用户代码文件
+        String userCodePath = userCodeParentPath + File.separator + globalCodeFileName;
+        return FileUtil.writeString(code, userCodePath,
+                StandardCharsets.UTF_8);
+    }
+
+
+    /**
+     * 2. 编译代码
+     *
+     * @param compileCmd
+     * @return
+     */
+    private ExecuteMessage compileCode(String compileCmd) {
+        try {
+            Process compileProcess = Runtime.getRuntime().exec(compileCmd);
+            ExecuteMessage executeMessage = ProcessUtil.runProcessAndGetMessage(compileProcess, "编译");
+            return executeMessage;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+
+    /**
+     * 3. 执行字节码文件，获得执行结果列表
+     *
+     * @param inputList 输入用例
+     * @param runCmd    运行的cmd
+     * @return List<ExecuteMessage>
+     */
+    private List<ExecuteMessage> runCode(List<String> inputList, String runCmd) {
+        List<ExecuteMessage> executeMessageList = new LinkedList<>();
+        for (String input : inputList) {
+            Process runProcess;
+            try {
+                runProcess = Runtime.getRuntime().exec(runCmd);
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(TIMEOUT);
+                        log.info("超时了，中断");
+                        runProcess.destroy();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }).start();
+                ExecuteMessage executeMessage = ProcessUtil.handleProcessInteraction(runProcess, input, "运行");
+                log.info("{}", executeMessage);
+                executeMessageList.add(executeMessage);
+            } catch (IOException e) {
+                throw new RuntimeException("程序执行异常，" + e);
+            }
+        }
+        return executeMessageList;
+    }
+
+
+    /**
+     * 4. 获取输出结果
+     *
+     * @param executeMessageList
+     * @return
+     */
+    public ExecuteCodeResponse getOutputResponse(List<ExecuteMessage> executeMessageList) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        List<String> outputList = new ArrayList<>();
+        // 一组输入用例中某个用例执行时长的最大值，便于判断是否超时
+        long maxTime = 0;
+        for (ExecuteMessage executeMessage : executeMessageList) {
+            String errorMessage = executeMessage.getErrorMessage();
+            if (StrUtil.isNotBlank(errorMessage)) {
+                executeCodeResponse.setMessage(errorMessage);
+                // 执行中存在错误
+                executeCodeResponse.setStatus(3);
+                break;
+            }
+            outputList.add((executeMessage.getMessage()));
+            Long time = executeMessage.getTime();
+            if (time != null) {
+                maxTime = Math.max(maxTime, time);
+            }
+        }
+        executeCodeResponse.setOutputList(outputList);
+        // 表示正常运行完成
+        if (outputList.size() == executeMessageList.size()) {
+            executeCodeResponse.setStatus(2);
+        }
+        QuestionSubmitJudgeInfo questionSubmitJudgeInfo = new QuestionSubmitJudgeInfo();
+        questionSubmitJudgeInfo.setTime(maxTime);
+        executeCodeResponse.setJudgeInfo(questionSubmitJudgeInfo);
+        return executeCodeResponse;
+    }
+
+    /**
+     * 5. 删除文件
+     *
+     * @param userCodeFile
+     * @return
+     */
+    public boolean deleteFile(File userCodeFile) {
+        if (userCodeFile == null) {
+            return true;
+        }
+        if (userCodeFile.getParentFile() != null) {
+            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
+            boolean del = FileUtil.del(userCodeParentPath);
+            System.out.println("删除" + (del ? "成功" : "失败"));
+            return del;
+        }
+        return true;
+    }
+
+
+    /**
+     * 6. 错误处理，提升程序健壮性
+     */
+    private ExecuteCodeResponse getErrorResponse(Throwable e) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(new ArrayList<>());
+        executeCodeResponse.setMessage(e.getMessage());
+        executeCodeResponse.setStatus(3);
+        executeCodeResponse.setJudgeInfo(new QuestionSubmitJudgeInfo());
+        return executeCodeResponse;
+    }
+}
+```
+
+##### 修改判题策略
+
+```java
+import cn.hutool.json.JSONUtil;
+import com.luoying.luoojbackendjudgeservice.judge.strategy.JudgeContext;
+import com.luoying.luoojbackendjudgeservice.judge.strategy.JudgeStrategy;
+import com.luoying.luoojbackendmodel.dto.question.QuestionJudgeCase;
+import com.luoying.luoojbackendmodel.dto.question.QuestionJudgeCconfig;
+import com.luoying.luoojbackendmodel.dto.questionsubmit.QuestionSubmitJudgeInfo;
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.enums.JudgeInfoMessagenum;
+
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * 默认判题策略
+ */
+public class DefaultJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 如果judgeInfo.getMessage()不为空，说明代码沙箱执行代码的过程中有异常
+        if (judgeInfo.getMessage() != null) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.getEnumByValue(judgeInfo.getMessage());
+            QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+            judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+            judgeInfoResponse.setMemory(Optional.ofNullable(judgeInfo.getMemory()).orElse(500L));
+            judgeInfoResponse.setTime(judgeInfo.getTime());
+            return judgeInfoResponse;
+        }
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = Optional.ofNullable(judgeInfo.getMemory()).orElse(500L);
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        if (time > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+```
+
+```java
+import cn.hutool.json.JSONUtil;
+import com.luoying.luoojbackendjudgeservice.judge.strategy.JudgeContext;
+import com.luoying.luoojbackendjudgeservice.judge.strategy.JudgeStrategy;
+import com.luoying.luoojbackendmodel.dto.question.QuestionJudgeCase;
+import com.luoying.luoojbackendmodel.dto.question.QuestionJudgeCconfig;
+import com.luoying.luoojbackendmodel.dto.questionsubmit.QuestionSubmitJudgeInfo;
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.enums.JudgeInfoMessagenum;
+
+
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Java判题策略
+ */
+public class JavaJudgeStrategy implements JudgeStrategy {
+    /**
+     * 执行判题
+     *
+     * @param judgeContext
+     * @return
+     */
+    @Override
+    public QuestionSubmitJudgeInfo doJudge(JudgeContext judgeContext) {
+        QuestionSubmitJudgeInfo judgeInfo = judgeContext.getJudgeInfo();
+        List<String> inputList = judgeContext.getInputList();
+        List<String> outputList = judgeContext.getOutputList();
+        Question question = judgeContext.getQuestion();
+        List<QuestionJudgeCase> judgeCaseList = judgeContext.getJudgeCaseList();
+
+        // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+        JudgeInfoMessagenum judgeInfoMessagenum = JudgeInfoMessagenum.ACCEPTED;
+        // 如果judgeInfo.getMessage()不为空，说明代码沙箱执行代码的过程中有异常
+        if (judgeInfo.getMessage() != null) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.getEnumByValue(judgeInfo.getMessage());
+            QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+            judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+            judgeInfoResponse.setMemory(Optional.ofNullable(judgeInfo.getMemory()).orElse(500L));
+            judgeInfoResponse.setTime(judgeInfo.getTime());
+            return judgeInfoResponse;
+        }
+        // 5.1 先判断沙箱执行的结果输出数量是否和预期输出数量相等
+        if (outputList.size() != inputList.size()) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+        }
+        // 5.2 依次判断每一项输出和预期输出是否相等
+        for (int i = 0; i < judgeCaseList.size(); i++) {
+            QuestionJudgeCase judgeCase = judgeCaseList.get(i);
+            if (!judgeCase.getOutput().equals(outputList.get(i))) {
+                judgeInfoMessagenum = JudgeInfoMessagenum.WRONG_ANSWER;
+            }
+        }
+        // 5.3 判题题目的限制是否符合要求
+
+        QuestionJudgeCconfig questionJudgeCconfig = JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class);
+        Long timeLimit = questionJudgeCconfig.getTimeLimit();
+        Long memoryLimit = questionJudgeCconfig.getMemoryLimit();
+
+        Long memory = Optional.ofNullable(judgeInfo.getMemory()).orElse(500L);
+        Long time = judgeInfo.getTime();
+        if (memory > memoryLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.MEMORY_LIMIT_EXCEEDED;
+        }
+        // java程序需要额外执行10秒钟
+        long JAVA_EXTRA_TIME_COST = 10000L;
+        if (time - JAVA_EXTRA_TIME_COST > timeLimit) {
+            judgeInfoMessagenum = JudgeInfoMessagenum.TIME_LIMIT_EXCEEDED;
+        }
+        QuestionSubmitJudgeInfo judgeInfoResponse = new QuestionSubmitJudgeInfo();
+        judgeInfoResponse.setMessage(judgeInfoMessagenum.getValue());
+        judgeInfoResponse.setMemory(memory);
+        judgeInfoResponse.setTime(time);
+        return judgeInfoResponse;
+    }
+}
+
+```
+
 #### 根据语言选择对应代码沙箱
 
 ```java
@@ -9534,6 +10165,8 @@ public class JavaNativeCodeSandBox extends CodeSandBoxTemplate {
 }
 ```
 
+
+
 ### 支持C++语言
 
 安装gcc：https://blog.csdn.net/qq_45601448/article/details/109158588
@@ -9565,9 +10198,13 @@ public class CppNativeCodeSandBox extends CodeSandBoxTemplate {
 }
 ```
 
+
+
 ### 编程语言类型改为后端下发
 
 #### 后端
+
+`QuestionController`添加`getCodeLanguage`接口
 
 ```java
 @GetMapping("/get/language")
@@ -9641,7 +10278,7 @@ onMounted(async () => {
 
 ### 死信队列,避免消息积压
 
-**启动项目前，建议先把原来的工作队列删除，这样新配置才会生效**
+**启动项目前，建议先在rabbitmq监控面板把原来的工作队列删除，这样工作队列的新配置才会生效**
 
 **1、judge-service `InitRabbitMq`工作队列、工作交换机、死信队列、死信交换机初始化**
 
@@ -9757,6 +10394,26 @@ public class FailMessageConsumer {
 **3、judge-service `MessageConsumer`添加消息判空处理**
 
 ```java
+import com.luoying.luoojbackendcommon.common.ErrorCode;
+import com.luoying.luoojbackendcommon.exception.BusinessException;
+import com.luoying.luoojbackendjudgeservice.judge.JudgeService;
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.entity.QuestionSubmit;
+import com.luoying.luoojbackendmodel.enums.JudgeInfoMessagenum;
+import com.luoying.luoojbackendmodel.enums.QuestionSubmitStatusEnum;
+import com.luoying.luoojbackendmodel.vo.QuestionSubmitVO;
+import com.luoying.luoojbackendserviceclient.service.QuestionFeignClient;
+import com.rabbitmq.client.Channel;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.Resource;
+import java.io.IOException;
+
+
 @Component
 @Slf4j
 public class MessageConsumer {
@@ -9766,8 +10423,9 @@ public class MessageConsumer {
 
     @Resource
     private QuestionFeignClient questionFeignClient;
-    
+
     private static final String QUEUE_NAME = "oj_queue";
+
     //指定程序监听的消息队列和确认机制
     @RabbitListener(queues = {QUEUE_NAME}, ackMode = "MANUAL")
     public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
@@ -9782,16 +10440,18 @@ public class MessageConsumer {
         try {
             // 判题
             judgeService.doJudge(questionSubmitId);
-            // 判断是否判题成功且通过
+            // 判断提交状态是否为判题成功
             QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
             QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
-            String judgeMessage = questionSubmitVO.getJudgeInfo().getMessage();
-            if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())
-                    || !JudgeInfoMessagenum.ACCEPTED.equals(JudgeInfoMessagenum.getEnumByValue(judgeMessage))) {
-                channel.basicNack(deliveryTag, false, false);
+            if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())) {
                 throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
             }
             // 设置通过数
+            // 判断题目是否通过
+            if (!JudgeInfoMessagenum.ACCEPTED.getValue().equals(questionSubmitVO.getJudgeInfo().getMessage())) {
+                channel.basicAck(deliveryTag, false);
+                return;
+            }
             Long questionId = questionSubmit.getQuestionId();
             Question question = questionFeignClient.getQuestionById(questionId);
             Integer acceptedNum = question.getAcceptedNum();

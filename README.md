@@ -8746,6 +8746,61 @@ const onPageSizeChange = (size: number) => {
 </a-form>
 ```
 
+**5、修改columns**
+
+```vue
+const columns = [
+  {
+    title: "题号",
+    slotName: "id",
+  },
+  {
+    title: "题目",
+    slotName: "title",
+  },
+  {
+    title: "标签",
+    slotName: "tags",
+  },
+  {
+    title: "通过率",vue
+    slotName: "acceptedRate",
+  },
+  {
+    title: "创建时间",
+    slotName: "createTime",
+  },
+];
+```
+
+**6、修改通过率展示样式**
+
+保留四位小数
+
+```vue
+<template #acceptedRate="{ record }">
+  {{
+    `${
+      record.submitNum
+        ? (record.acceptedNum / record.submitNum).toFixed(4) * 100
+        : "0"
+    }%(${record.acceptedNum}/${record.submitNum})`
+  }}
+</template>
+```
+
+**7、为题目标题添加插槽**
+
+可以点击标题跳转到做题页面
+
+```vue
+<template #title="{ record }">
+  <a-button type="text" @click="toDoQuestion(record)"
+    >{{ record.title }}
+  </a-button>
+</template>
+```
+
 
 
 ## 扩展
@@ -10474,7 +10529,740 @@ public class MessageConsumer {
 }
 ```
 
+### 分表
 
+**问题1：**如果在做题页面，用户想查看自己的提交记录，需要到question_submit表中查询。随着用户增多，提交记录增多，查询速度会逐渐变慢
+
+**解决：**用户注册时，就为用户分配一张个人提交记录表，记录用户的提交记录，之后只需从该表查询即可
+
+**问题2：**题库页面无法显示每道题的解答状态
+
+**解决：**用户注册时，就为用户分配一张个人通过题目表，记录通过题目的id，之后只需从该表查询即可
+
+#### 后端
+
+`question-service`
+
+##### 准备实体类
+
+```java
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
+import java.io.Serializable;
+import java.util.Date;
+
+/**
+ * 通过的题目
+ */
+@Data
+public class AcceptedQuestion implements Serializable {
+    /**
+     * id
+     */
+    private Long questionId;
+
+    /**
+     * 创建时间
+     */
+    private Date createTime;
+
+    /**
+     * 更新时间
+     */
+    private Date updateTime;
+
+    /**
+     * 是否删除
+     */
+    @TableLogic
+    private Integer isDelete;
+
+    @TableField(exist = false)
+    private static final long serialVersionUID = 1L;
+}
+```
+
+```java
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.dto.question.QuestionJudgeCconfig;
+import lombok.Data;
+import org.springframework.beans.BeanUtils;
+
+import java.io.Serializable;
+import java.util.Date;
+import java.util.List;
+
+/**
+ * 题目
+ *
+ * @TableName question
+ */
+@Data
+public class QuestionVO implements Serializable {
+    private final static Gson GSON = new Gson();
+    /**
+     * id
+     */
+    private Long id;
+
+    /**
+     * 题目标题
+     */
+    private String title;
+
+    /**
+     * 题目内容
+     */
+    private String content;
+
+    /**
+     * 标签列表（json 数组）
+     */
+    private List<String> tags;
+
+    /**
+     * 题目提交数
+     */
+    private Integer submitNum;
+
+    /**
+     * 题目通过数
+     */
+    private Integer acceptedNum;
+
+    /**
+     * 判题配置（json对象）
+     */
+    private QuestionJudgeCconfig judgeConfig;
+
+    /**
+     * 点赞数
+     */
+    private Integer thumbNum;
+
+    /**
+     * 收藏数
+     */
+    private Integer favourNum;
+
+    /**
+     * 创建用户 id
+     */
+    private Long userId;
+
+    /**
+     * 是否通过
+     */
+    private Integer isAccepted;
+
+    /**
+     * 创建时间
+     */
+    private Date createTime;
+
+    /**
+     * 更新时间
+     */
+    private Date updateTime;
+
+    /**
+     *
+     */
+    private UserVO userVO;
+
+    /**
+     * 包装类转对象
+     *
+     * @param questionVO
+     * @return
+     */
+    public static Question voToObj(QuestionVO questionVO) {
+        if (questionVO == null) {
+            return null;
+        }
+        Question question = new Question();
+        BeanUtils.copyProperties(questionVO, question);
+        List<String> tagList = questionVO.getTags();
+        if (tagList != null) {
+            question.setTags(GSON.toJson(tagList));
+            // question.setTags(JSONUtil.toJsonStr(tagList));
+        }
+        QuestionJudgeCconfig judgeConfig = questionVO.getJudgeConfig();
+        if (judgeConfig != null) {
+            question.setJudgeConfig(GSON.toJson(judgeConfig));
+            // question.setJudgeConfig(JSONUtil.toJsonStr(judgeConfig));
+        }
+        return question;
+    }
+
+    /**
+     * 对象转包装类
+     *
+     * @param question
+     * @return
+     */
+    public static QuestionVO objToVo(Question question) {
+        if (question == null) {
+            return null;
+        }
+        QuestionVO questionVO = new QuestionVO();
+        BeanUtils.copyProperties(question, questionVO);
+        questionVO.setTags(GSON.fromJson(question.getTags(), new TypeToken<List<String>>() {
+        }.getType()));
+        // questionVO.setTags(JSONUtil.toList(question.getTags(), String.class));
+        questionVO.setJudgeConfig(GSON.fromJson(question.getJudgeConfig(), new TypeToken<QuestionJudgeCconfig>() {
+        }.getType()));
+        // questionVO.setJudgeConfig(JSONUtil.toBean(question.getJudgeConfig(), QuestionJudgeCconfig.class));
+        return questionVO;
+    }
+}
+```
+
+##### 准备Mapper
+
+（新增记录，查询所有记录，判断表是否存在，删除表，创建表）
+
+```java
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.luoying.luoojbackendmodel.entity.AcceptedQuestion;
+import org.apache.ibatis.annotations.Param;
+
+import java.util.List;
+
+
+/**
+ * @author 落樱的悔恨
+ * @description 针对表【accepted_question_userId(题目)】的数据库操作Mapper
+ * @createDate 2023-11-09 16:32:34
+ * @Entity com.luoying.model.entity.Question
+ */
+public interface AcceptedQuestionMapper extends BaseMapper<AcceptedQuestion> {
+    /**
+     * 向题目通过表新增通过题目的id
+     * @param tableName
+     * @param questionId
+     * @return
+     */
+    int addAcceptedQuestion(@Param("tableName") String tableName, @Param("questionId") long questionId);
+
+    /**
+     * 根据表名 获取该用户所有通过的题目
+     *
+     * @param tableName
+     * @return
+     */
+    List<AcceptedQuestion> queryAcceptedQuestionList(@Param("tableName") String tableName);
+
+    /**
+     * 是否存在表
+     *
+     * @param tableName
+     * @return
+     */
+    int existAcceptedQuestionTable(@Param("tableName") String tableName);
+
+    /**
+     * 删除通过题目表
+     *
+     * @param tableName
+     * @return
+     */
+    int dropAcceptedQuestionTable(@Param("tableName") String tableName);
+
+    /**
+     * 创建通过题目表
+     *
+     * @param tableName
+     * @return
+     */
+    int createAcceptedQuestionTable(@Param("tableName") String tableName);
+
+}
+```
+
+```java
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.luoying.luoojbackendmodel.entity.QuestionSubmit;
+import org.apache.ibatis.annotations.Param;
+
+import java.util.List;
+
+/**
+ * @author 落樱的悔恨
+ * @description 针对表【question_submit(题目提交记录)】的数据库操作Mapper
+ * @createDate 2023-11-09 16:32:34
+ * @Entity com.luoying.model.entity.QuestionSubmit
+ */
+public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
+    /**
+     * 向 个人提交表 新增个人的提交记录
+     * @param tableName
+     * @param questionSubmit
+     * @return
+     */
+    int addQuestionSubmit(@Param("tableName") String tableName, @Param("questionSubmit") QuestionSubmit questionSubmit);
+
+    /**
+     * 根据 个人提交表 获取该用户所有通过的题目
+     * @param tableName
+     * @return
+     */
+    List<QuestionSubmit> queryQuestionSubmitList(@Param("tableName") String tableName);
+
+    /**
+     * 是否存在 个人提交表
+     *
+     * @param tableName
+     * @return
+     */
+    int existQuestionSubmitTable(@Param("tableName") String tableName);
+
+    /**
+     * 删除 个人提交表
+     *
+     * @param tableName
+     * @return
+     */
+    int dropQuestionSubmitTable(@Param("tableName") String tableName);
+
+    /**
+     * 创建 个人提交表
+     *
+     * @param tableName
+     * @return
+     */
+    int createQuestionSubmitTable(@Param("tableName") String tableName);
+}
+```
+
+##### 编写xml
+
+`AcceptedQuestionMapper.xml`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.luoying.luoojbackendquestionservice.mapper.AcceptedQuestionMapper">
+
+    <resultMap id="BaseResultMap" type="com.luoying.luoojbackendmodel.entity.AcceptedQuestion">
+        <id property="questionId" column="id" jdbcType="BIGINT"/>
+        <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
+        <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
+        <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
+    </resultMap>
+
+    <insert id="addAcceptedQuestion">
+        insert into ${tableName} (questionId)
+        values (#{questionId})
+    </insert>
+
+    <select id="queryAcceptedQuestionList" parameterType="string" resultType="com.luoying.luoojbackendmodel.entity.AcceptedQuestion">
+        select * from ${tableName}
+    </select>
+
+    <select id="existAcceptedQuestionTable" parameterType="string" resultType="java.lang.Integer">
+        select count(*)
+        from information_schema.TABLES
+        where table_name = #{tableName}
+    </select>
+
+    <update id="dropAcceptedQuestionTable" parameterType="string">
+        DROP TABLE IF EXISTS ${tableName}
+    </update>
+
+    <update id="createAcceptedQuestionTable" parameterType="string">
+        CREATE TABLE ${tableName}
+        (
+            id         bigint auto_increment comment 'id'
+                primary key,
+            questionId bigint                             not null comment '题目id',
+            createTime datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+            updateTime datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+            isDelete   tinyint  default 0                 not null comment '是否删除',
+            index      idx_questionId (questionId)
+        ) comment '某用户通过的题目' collate = utf8mb4_unicode_ci;
+    </update>
+
+    <sql id="Base_Column_List">
+        id
+        ,title,content,
+        tags,answer,submitNum,
+        acceptedNum,judgeConfig,judgeCase,
+        thumbNum,favourNum,userId,
+        createTime,updateTime,isDelete
+    </sql>
+
+</mapper>
+```
+
+`QuestionSubmitMapper.xml`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.luoying.luoojbackendquestionservice.mapper.QuestionSubmitMapper">
+
+    <resultMap id="BaseResultMap" type="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
+            <id property="id" column="id" jdbcType="BIGINT"/>
+            <result property="language" column="language" jdbcType="VARCHAR"/>
+            <result property="questionId" column="questionId" jdbcType="BIGINT"/>
+            <result property="userId" column="userId" jdbcType="BIGINT"/>
+            <result property="code" column="code" jdbcType="VARCHAR"/>
+            <result property="judgeInfo" column="judgeInfo" jdbcType="VARCHAR"/>
+            <result property="status" column="status" jdbcType="INTEGER"/>
+            <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
+            <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
+            <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
+    </resultMap>
+
+    <insert id="addQuestionSubmit">
+        insert into ${tableName} (language, questionId, userId, code, judgeInfo, status)
+        values (#{questionSubmit.language,jdbcType=VARCHAR}, #{questionSubmit.questionId,jdbcType=BIGINT},
+                #{questionSubmit.userId,jdbcType=BIGINT}, #{questionSubmit.code,jdbcType=VARCHAR},
+                #{questionSubmit.judgeInfo,jdbcType=VARCHAR}, #{questionSubmit.status,jdbcType=INTEGER})
+    </insert>
+
+    <select id="queryQuestionSubmitList" parameterType="string" resultType="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
+        select * from ${tableName}
+    </select>
+
+    <select id="existQuestionSubmitTable" parameterType="string" resultType="java.lang.Integer">
+        select count(*)
+        from information_schema.TABLES
+        where table_name = #{tableName}
+    </select>
+
+    <update id="dropQuestionSubmitTable" parameterType="string">
+        DROP TABLE IF EXISTS ${tableName}
+    </update>
+
+    <update id="createQuestionSubmitTable" parameterType="string">
+        create table ${tableName}
+        (
+            id         bigint auto_increment comment 'id'
+                primary key,
+            language   varchar(128)                       not null comment '编程语言',
+            questionId bigint                             not null comment '题目id',
+            userId     bigint                             not null comment '提交用户id',
+            code       text                               not null comment '用户提交的代码',
+            judgeInfo  varchar(128) null comment '判题信息',
+            status     int      default 0                 not null comment '判题状态（0-待判题、1-判题中、2-通过、3-失败）',
+            createTime datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+            updateTime datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+            isDelete   tinyint  default 0                 not null comment '是否删除',
+            index      idx_userId (userId),
+            index      idx_questionId (questionId)
+        ) comment '某用户的提交记录' collate = utf8mb4_unicode_ci
+    </update>
+
+    <sql id="Base_Column_List">
+        id,language,questionId,
+        userId,code,judgeInfo,
+        status,createTime,updateTime,
+        isDelete
+    </sql>
+</mapper>
+```
+
+##### 修改题目查询
+
+```java
+@Resource
+private AcceptedQuestionMapper acceptedQuestionMapper;
+
+@Override
+public Page<QuestionVO> getQuestionVOPage(Page<Question> questionPage, HttpServletRequest request) {
+    List<Question> questionList = questionPage.getRecords();
+    Page<QuestionVO> questionVOPage = new Page<>(questionPage.getCurrent(), questionPage.getSize(), questionPage.getTotal());
+    if (CollectionUtils.isEmpty(questionList)) {
+        return questionVOPage;
+    }
+    // 1. 题目关联查询用户信息
+    Set<Long> userIdSet = questionList.stream().map(Question::getUserId).collect(Collectors.toSet());
+    Map<Long, List<User>> userIdUserListMap = userFeighClient.listByIds(userIdSet).stream()
+            .collect(Collectors.groupingBy(User::getId));
+    // 2. 填充信息
+    List<QuestionVO> questionVOList = questionList.stream().map(question -> {
+        QuestionVO questionVO = QuestionVO.objToVo(question);
+        // 填充创建用户信息
+        Long userId = question.getUserId();
+        User user = null;
+        if (userIdUserListMap.containsKey(userId)) {
+            user = userIdUserListMap.get(userId).get(0);
+        }
+        questionVO.setUserVO(userFeighClient.getUserVO(user));
+        return questionVO;
+    }).collect(Collectors.toList());
+    // 4. 获取当前登录用户id
+    try {
+        User loginUser = userFeighClient.getLoginUser(request);
+        if (loginUser != null) {
+            Long id = loginUser.getId();
+            // 5. 查询该用户的题目通过表，获取所有通过题目的id集合
+            String tableName = "accepted_question_" + id;
+            List<AcceptedQuestion> acceptedQuestionList = acceptedQuestionMapper.queryAcceptedQuestionList(tableName);
+            Set<Long> acceptedQuestionIdSet = acceptedQuestionList.stream().map(AcceptedQuestion::getQuestionId).collect(Collectors.toSet());
+            questionVOList = questionVOList.stream().map(questionVO -> {
+                // 填充是否通过信息
+                if (acceptedQuestionIdSet.contains(questionVO.getId())) {
+                    // 0 代表通过
+                    questionVO.setIsAccepted(0);
+                } else {
+                    // 1 代表未通过
+                    questionVO.setIsAccepted(1);
+                }
+                return questionVO;
+            }).collect(Collectors.toList());
+        }
+    } catch (Exception e) {
+        questionVOList = questionVOList.stream().map(questionVO -> {
+            // 1 代表未通过
+            questionVO.setIsAccepted(1);
+            return questionVO;
+        }).collect(Collectors.toList());
+    }
+    questionVOPage.setRecords(questionVOList);
+    return questionVOPage;
+}
+```
+
+`service-client`
+
+##### QuestionFeignClient 提供接口
+
+```java
+@GetMapping("/accepted_question/exist/table")
+boolean existAcceptedQuestionTable(@RequestParam("tableName") String tableName);
+
+@GetMapping("/accepted_question/drop/table")
+boolean dropAcceptedQuestionTable(@RequestParam("tableName") String tableName);
+
+@GetMapping("/accepted_question/create/table")
+boolean createAcceptedQuestionTable(@RequestParam("tableName") String tableName);
+
+@GetMapping("/question_submit/exist/table")
+boolean existQuestionSubmitTable(@RequestParam("tableName") String tableName);
+
+@GetMapping("/question_submit/drop/table")
+boolean dropQuestionSubmitTable(@RequestParam("tableName") String tableName);
+
+@GetMapping("/question_submit/create/table")
+boolean createQuestionSubmitTable(@RequestParam("tableName") String tableName);
+```
+
+`question-service`
+
+##### QuestionInnerController实现接口
+
+```java
+import com.luoying.luoojbackendmodel.entity.Question;
+import com.luoying.luoojbackendmodel.entity.QuestionSubmit;
+import com.luoying.luoojbackendquestionservice.mapper.AcceptedQuestionMapper;
+import com.luoying.luoojbackendquestionservice.mapper.QuestionSubmitMapper;
+import com.luoying.luoojbackendquestionservice.service.QuestionService;
+import com.luoying.luoojbackendquestionservice.service.QuestionSubmitService;
+import com.luoying.luoojbackendserviceclient.service.QuestionFeignClient;
+import org.springframework.web.bind.annotation.*;
+
+import javax.annotation.Resource;
+
+/**
+ * 该服务仅内部调用，不是给前端的
+ */
+@RestController
+@RequestMapping("/inner")
+public class QuestionInnerController implements QuestionFeignClient {
+
+    @Resource
+    private QuestionService questionService;
+
+    @Resource
+    private QuestionSubmitService questionSubmitService;
+
+    @Resource
+    private AcceptedQuestionMapper acceptedQuestionMapper;
+
+    @Resource
+    private QuestionSubmitMapper questionSubmitMapper;
+
+    @Override
+    @GetMapping("/get/id")
+
+    public Question getQuestionById(long questionId) {
+        return questionService.getById(questionId);
+    }
+
+    @Override
+    @GetMapping("/question_submit/get/id")
+    public QuestionSubmit getQuestionSubmitById(long questionSubmitId) {
+        return questionSubmitService.getById(questionSubmitId);
+    }
+
+    @Override
+    @PostMapping("/question_submit/update")
+    public Boolean updateQuestionSubmitById(QuestionSubmit questionSubmit) {
+        return questionSubmitService.updateById(questionSubmit);
+    }
+
+    @Override
+    @PostMapping("/update")
+    public Boolean updateQuestionById(@RequestBody Question question) {
+        return questionService.updateById(question);
+    }
+
+    @Override
+    @GetMapping("/accepted_question/exist/table")
+    public boolean existAcceptedQuestionTable(String tableName) {
+        return acceptedQuestionMapper.existAcceptedQuestionTable(tableName) == 1;
+    }
+
+    @Override
+    @GetMapping("/accepted_question/drop/table")
+    public boolean dropAcceptedQuestionTable(String tableName) {
+        return acceptedQuestionMapper.dropAcceptedQuestionTable(tableName) == 0;
+    }
+
+    @Override
+    @GetMapping("/accepted_question/create/table")
+    public boolean createAcceptedQuestionTable(String tableName) {
+        return acceptedQuestionMapper.createAcceptedQuestionTable(tableName) == 0;
+    }
+
+    @Override
+    @GetMapping("/question_submit/exist/table")
+    public boolean existQuestionSubmitTable(String tableName) {
+        return questionSubmitMapper.existQuestionSubmitTable(tableName) == 1;
+    }
+
+    @Override
+    @GetMapping("/question_submit/drop/table")
+    public boolean dropQuestionSubmitTable(String tableName) {
+        return questionSubmitMapper.dropQuestionSubmitTable(tableName) == 0;
+    }
+
+    @Override
+    @GetMapping("/question_submit/create/table")
+    public boolean createQuestionSubmitTable(String tableName) {
+        return questionSubmitMapper.createQuestionSubmitTable(tableName) == 0;
+    }
+
+}
+```
+
+`user-service`
+
+##### 实现注册时创建表
+
+```java
+@Resource
+private QuestionFeignClient questionFeignClient;
+@Override
+public long userRegister(String userAccount, String userPassword, String checkPassword) {
+    // 1. 校验
+    if (StringUtils.isAnyBlank(userAccount, userPassword, checkPassword)) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
+    }
+    if (userAccount.length() < 4) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户账号过短");
+    }
+    if (userPassword.length() < 8 || checkPassword.length() < 8) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户密码过短");
+    }
+    // 密码和校验密码相同
+    if (!userPassword.equals(checkPassword)) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "两次输入的密码不一致");
+    }
+    synchronized (userAccount.intern()) {
+        // 账户不能重复
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("userAccount", userAccount);
+        long count = this.baseMapper.selectCount(queryWrapper);
+        if (count > 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号重复");
+        }
+        // 2. 加密
+        String encryptPassword = DigestUtils.md5DigestAsHex((SALT + userPassword).getBytes());
+        // 3. 插入数据
+        User user = new User();
+        user.setUserAccount(userAccount);
+        user.setUserPassword(encryptPassword);
+        boolean saveResult = this.save(user);
+        if (!saveResult) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "注册失败，数据库错误");
+        }
+        long userId = user.getId();
+        // 4. 创建 题目通过表 和 个人提交表
+        String acceptedQuestionTable = "accepted_question_" + userId;
+        String questionSubmitTable = "question_submit_" + userId;
+        // 查询 题目通过表 是否存在
+        if (questionFeignClient.existAcceptedQuestionTable(acceptedQuestionTable)
+                || questionFeignClient.existQuestionSubmitTable(questionSubmitTable)) {
+            // 删除旧表
+            questionFeignClient.dropAcceptedQuestionTable(acceptedQuestionTable);
+            questionFeignClient.dropQuestionSubmitTable(questionSubmitTable);
+        }
+        // 新建 题目通过表 和 个人提交表
+        questionFeignClient.createAcceptedQuestionTable(acceptedQuestionTable);
+        questionFeignClient.createQuestionSubmitTable(questionSubmitTable);
+        return userId;
+    }
+}
+```
+
+#### 前端
+
+**修改columns**
+
+```vue
+const columns = [
+  {
+    title: "状态",
+    slotName: "isAccepted",
+  },
+  {
+    title: "题目",
+    slotName: "title",
+  },
+  {
+    title: "标签",
+    slotName: "tags",
+  },
+  {
+    title: "通过率",
+    slotName: "acceptedRate",
+  },
+  {
+    title: "创建时间",
+    slotName: "createTime",
+  },
+];
+```
+
+**添加插槽**
+
+```vue
+<template #isAccepted="{ record }">
+  <a-tooltip v-if="record.isAccepted == 0" content="已解答">
+    <icon-check-circle
+      :style="{ fontSize: '32px', color: 'green' }"
+      :stroke-width="2"
+    />
+  </a-tooltip>
+</template>
+```
+
+#### 展示
+
+![image-20231221175422860](assets/image-20231221175422860.png)
+
+![image-20231221175446564](assets/image-20231221175446564.png)
 
 ## 扩展思路
 

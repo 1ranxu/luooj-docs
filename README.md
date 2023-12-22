@@ -10723,7 +10723,7 @@ public class QuestionVO implements Serializable {
 
 ##### 准备Mapper
 
-（新增记录，查询所有记录，判断表是否存在，删除表，创建表）
+（新增记录，查询所有记录，更新记录，判断表是否存在，删除表，创建表）
 
 ```java
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
@@ -10799,6 +10799,7 @@ import java.util.List;
 public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
     /**
      * 向 个人提交表 新增个人的提交记录
+     *
      * @param tableName
      * @param questionSubmit
      * @return
@@ -10807,10 +10808,23 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
 
     /**
      * 根据 个人提交表 获取该用户所有通过的题目
+     *
      * @param tableName
      * @return
      */
     List<QuestionSubmit> queryQuestionSubmitList(@Param("tableName") String tableName);
+
+    /**
+     * 根据 个人提交表 和 提交记录id 更新该用户的提交记录
+     *
+     * @param tableName
+     * @return
+     */
+    int updateQuestionSubmit(@Param("tableName") String tableName, @Param("questionSubmit") QuestionSubmit questionSubmit);
+
+    /**
+     *
+     */
 
     /**
      * 是否存在 个人提交表
@@ -10880,7 +10894,7 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
         (
             id         bigint auto_increment comment 'id'
                 primary key,
-            questionId bigint                             not null comment '题目id',
+            questionId bigint unique                      not null comment '题目id',
             createTime datetime default CURRENT_TIMESTAMP not null comment '创建时间',
             updateTime datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
             isDelete   tinyint  default 0                 not null comment '是否删除',
@@ -10910,28 +10924,58 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
 <mapper namespace="com.luoying.luoojbackendquestionservice.mapper.QuestionSubmitMapper">
 
     <resultMap id="BaseResultMap" type="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
-            <id property="id" column="id" jdbcType="BIGINT"/>
-            <result property="language" column="language" jdbcType="VARCHAR"/>
-            <result property="questionId" column="questionId" jdbcType="BIGINT"/>
-            <result property="userId" column="userId" jdbcType="BIGINT"/>
-            <result property="code" column="code" jdbcType="VARCHAR"/>
-            <result property="judgeInfo" column="judgeInfo" jdbcType="VARCHAR"/>
-            <result property="status" column="status" jdbcType="INTEGER"/>
-            <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
-            <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
-            <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
+        <id property="id" column="id" jdbcType="BIGINT"/>
+        <result property="language" column="language" jdbcType="VARCHAR"/>
+        <result property="questionId" column="questionId" jdbcType="BIGINT"/>
+        <result property="userId" column="userId" jdbcType="BIGINT"/>
+        <result property="code" column="code" jdbcType="VARCHAR"/>
+        <result property="judgeInfo" column="judgeInfo" jdbcType="VARCHAR"/>
+        <result property="status" column="status" jdbcType="INTEGER"/>
+        <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
+        <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
+        <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
     </resultMap>
 
     <insert id="addQuestionSubmit">
-        insert into ${tableName} (language, questionId, userId, code, judgeInfo, status)
-        values (#{questionSubmit.language,jdbcType=VARCHAR}, #{questionSubmit.questionId,jdbcType=BIGINT},
-                #{questionSubmit.userId,jdbcType=BIGINT}, #{questionSubmit.code,jdbcType=VARCHAR},
-                #{questionSubmit.judgeInfo,jdbcType=VARCHAR}, #{questionSubmit.status,jdbcType=INTEGER})
+        insert into ${tableName} (id, language, questionId, userId, code, judgeInfo, status)
+        values (#{questionSubmit.id,jdbcType=BIGINT}, #{questionSubmit.language,jdbcType=VARCHAR},
+                #{questionSubmit.questionId,jdbcType=BIGINT}, #{questionSubmit.userId,jdbcType=BIGINT},
+                #{questionSubmit.code,jdbcType=VARCHAR}, #{questionSubmit.judgeInfo,jdbcType=VARCHAR},
+                #{questionSubmit.status,jdbcType=INTEGER})
     </insert>
 
-    <select id="queryQuestionSubmitList" parameterType="string" resultType="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
-        select * from ${tableName}
+    <select id="queryQuestionSubmitList" parameterType="string"
+            resultType="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
+        select *
+        from ${tableName}
     </select>
+
+    <update id="updateQuestionSubmit">
+        update ${tableName}
+        <set>
+            <if test="questionSubmit.language != null ">
+                language=#{questionSubmit.language,jdbcType=VARCHAR},
+            </if>
+            <if test="questionSubmit.questionId > 0 ">
+                questionId=#{questionSubmit.questionId,jdbcType=BIGINT},
+            </if>
+            <if test="questionSubmit.userId > 0 ">
+                userId=#{questionSubmit.userId,jdbcType=BIGINT},
+            </if>
+            <if test="questionSubmit.code != null ">
+                code=#{questionSubmit.code,jdbcType=VARCHAR},
+            </if>
+            <if test="questionSubmit.judgeInfo != null ">
+                judgeInfo=#{questionSubmit.judgeInfo,jdbcType=VARCHAR},
+            </if>
+            <if test="questionSubmit.status > 0">
+                status=#{questionSubmit.status,jdbcType=INTEGER},
+            </if>
+        </set>
+        <where>
+            id = #{questionSubmit.id,jdbcType=BIGINT}
+        </where>
+    </update>
 
     <select id="existQuestionSubmitTable" parameterType="string" resultType="java.lang.Integer">
         select count(*)
@@ -10962,13 +11006,16 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
         ) comment '某用户的提交记录' collate = utf8mb4_unicode_ci
     </update>
 
+
     <sql id="Base_Column_List">
-        id,language,questionId,
+        id
+        ,language,questionId,
         userId,code,judgeInfo,
         status,createTime,updateTime,
         isDelete
     </sql>
 </mapper>
+
 ```
 
 ##### 修改题目查询
@@ -11038,6 +11085,9 @@ public Page<QuestionVO> getQuestionVOPage(Page<Question> questionPage, HttpServl
 ##### QuestionFeignClient 提供接口
 
 ```java
+@PostMapping("/accepted_question/add")
+boolean addAcceptedQuestion(@RequestParam("tableName")String tableName, @RequestParam("questionId")long questionId);
+
 @GetMapping("/accepted_question/exist/table")
 boolean existAcceptedQuestionTable(@RequestParam("tableName") String tableName);
 
@@ -11046,6 +11096,9 @@ boolean dropAcceptedQuestionTable(@RequestParam("tableName") String tableName);
 
 @GetMapping("/accepted_question/create/table")
 boolean createAcceptedQuestionTable(@RequestParam("tableName") String tableName);
+
+@PostMapping("/question_submit/update/personal")
+boolean updateQuestionSubmit(@RequestParam("tableName") String tableName, @RequestBody QuestionSubmit questionSubmit);
 
 @GetMapping("/question_submit/exist/table")
 boolean existQuestionSubmitTable(@RequestParam("tableName") String tableName);
@@ -11118,6 +11171,12 @@ public class QuestionInnerController implements QuestionFeignClient {
     }
 
     @Override
+    @PostMapping("/accepted_question/add")
+    public boolean addAcceptedQuestion(String tableName, long questionId) {
+        return acceptedQuestionMapper.addAcceptedQuestion(tableName, questionId) == 1;
+    }
+
+    @Override
     @GetMapping("/accepted_question/exist/table")
     public boolean existAcceptedQuestionTable(String tableName) {
         return acceptedQuestionMapper.existAcceptedQuestionTable(tableName) == 1;
@@ -11133,6 +11192,12 @@ public class QuestionInnerController implements QuestionFeignClient {
     @GetMapping("/accepted_question/create/table")
     public boolean createAcceptedQuestionTable(String tableName) {
         return acceptedQuestionMapper.createAcceptedQuestionTable(tableName) == 0;
+    }
+
+    @Override
+    @PostMapping("/question_submit/update/personal")
+    public boolean updateQuestionSubmit(String tableName, QuestionSubmit questionSubmit) {
+        return questionSubmitMapper.updateQuestionSubmit(tableName, questionSubmit) == 1;
     }
 
     @Override
@@ -11215,6 +11280,267 @@ public long userRegister(String userAccount, String userPassword, String checkPa
     }
 }
 ```
+
+##### 完善题目提交时的业务
+
+**1、提交时保存提交记录到个人提交表**
+
+`QuestionSubmitServiceImpl`
+
+```java
+@Resource
+private QuestionSubmitMapper questionSubmitMapper;
+/**
+ * 题目提交
+ *
+ * @param questionSubmitAddRequest
+ * @param loginUser
+ * @return 提交记录id
+ */
+@Override
+public long doQuestionSubmit(QuestionSubmitAddRequest questionSubmitAddRequest, User loginUser) {
+    // 校验编程语言是否合法
+    String language = questionSubmitAddRequest.getLanguage();
+    QuestionSubmitLanguageEnum languageEnum = QuestionSubmitLanguageEnum.getEnumByValue(language);
+    if (languageEnum == null) {
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "编程语言错误");
+    }
+    long questionId = questionSubmitAddRequest.getQuestionId();
+    // 判断实体是否存在，根据类别获取实体
+    Question question = questionService.getById(questionId);
+    if (question == null) {
+        throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+    }
+    // 设置提交数
+    Integer submitNum = question.getSubmitNum();
+    Question updateQuestion = new Question();
+    synchronized (question.getSubmitNum()) {
+        submitNum = submitNum + 1;
+        updateQuestion.setId(questionId);
+        updateQuestion.setSubmitNum(submitNum);
+        boolean save = questionService.updateById(updateQuestion);
+        if (!save) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "数据保存失败");
+        }
+    }
+    // 是否已题目提交
+    long userId = loginUser.getId();
+    // 每个用户串行题目提交
+    // 锁必须要包裹住事务方法
+    QuestionSubmit questionSubmit = new QuestionSubmit();
+    questionSubmit.setUserId(userId);
+    questionSubmit.setQuestionId(questionId);
+    questionSubmit.setLanguage(language);
+    questionSubmit.setCode(questionSubmitAddRequest.getCode());
+    // 设置初始状态
+    questionSubmit.setStatus(QuestionSubmitStatusEnum.WAITING.getValue());
+    questionSubmit.setJudgeInfo("{}");
+    // 保存到提交记录总表
+    boolean result = this.save(questionSubmit);
+    if (!result) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "题目提交失败");
+    }
+    // 保存到个人提交表
+    String tableName = "question_submit_" + userId;
+    questionSubmitMapper.addQuestionSubmit(tableName,questionSubmit);
+    // 发送消息
+    messageProducer.sendMessage(EXCHANGE_NAME, ROUTING_KEY, String.valueOf(questionSubmit.getId()));
+    // 执行判题服务
+    /*CompletableFuture.runAsync(() -> {
+        judgeService.doJudge(questionSubmit.getId());
+    });*/
+    return questionSubmit.getQuestionId();
+}
+```
+
+**2、判题时修改个人提交表中提交记录的判题信息和提交状态**
+
+`JudgeServiceImpl`
+
+```java
+@Override
+public QuestionSubmitVO doJudge(long questionSubmitId) {
+    // 1 传入题目的提交 id，获取到对应的题目、提交信息（包含代码、编程语言等）
+    QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+    if (questionSubmit == null) {
+        throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "提交记录不存在");
+    }
+    Long questionId = questionSubmit.getQuestionId();
+    Question question = questionFeignClient.getQuestionById(questionId);
+    if (question == null) {
+        throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "题目不存在");
+    }
+    // 2 如果题目提交状态不为等待中，就不用重复执行了
+    if (!questionSubmit.getStatus().equals(QuestionSubmitStatusEnum.WAITING.getValue())) {
+        throw new BusinessException(ErrorCode.OPERATION_ERROR, "已在判题");
+    }
+    // 3 更改判题（题目提交总表）的状态为 “判题中”，防止重复执行，也能让用户即时看到状态
+    QuestionSubmit questionSubmitUpdate = new QuestionSubmit();
+    questionSubmitUpdate.setId(questionSubmitId);
+    questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.RUNNING.getValue());
+    boolean update = questionFeignClient.updateQuestionSubmitById(questionSubmitUpdate);
+    if (!update) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+    }
+    // 更改判题（题目提交个人表）的状态为 “判题中”
+    long userId = questionSubmit.getUserId();
+    String tableName = "question_submit_" + userId;
+    update = questionFeignClient.updateQuestionSubmit(tableName, questionSubmitUpdate);
+    if (!update) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "个人提交表的提交记录的判题状态更新失败");
+    }
+    // 4、调用沙箱，获取到执行结果
+    String code = questionSubmit.getCode();
+    // 获取输入用例
+    List<QuestionJudgeCase> judgeCaseList = JSONUtil.toList(question.getJudgeCase(), QuestionJudgeCase.class);
+    List<String> inputList = judgeCaseList.stream().map(QuestionJudgeCase::getInput).collect(Collectors.toList());
+    String language = questionSubmit.getLanguage();
+    CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+    CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+    ExecuteCodeRequest codeRequest = ExecuteCodeRequest.builder()
+            .inputList(inputList)
+            .code(code)
+            .language(language)
+            .build();
+    ExecuteCodeResponse executeCodeResponse = codeSandBoxProxy.executeCode(codeRequest);
+    List<String> outputList = executeCodeResponse.getOutputList();
+    // 5 根据沙箱的执行结果，设置题目的判题状态和信息
+    JudgeContext judgeContext = new JudgeContext();
+    judgeContext.setOutputList(outputList);
+    judgeContext.setInputList(inputList);
+    judgeContext.setJudgeCaseList(judgeCaseList);
+    judgeContext.setQuestion(question);
+    judgeContext.setJudgeInfo(executeCodeResponse.getJudgeInfo());
+    judgeContext.setQuestionSubmit(questionSubmit);
+    QuestionSubmitJudgeInfo judgeInfo = judgeManager.doJudge(judgeContext);
+    // 修改提交记录总表的判题状态和判题信息
+    questionSubmitUpdate = new QuestionSubmit();
+    questionSubmitUpdate.setId(questionSubmitId);
+    questionSubmitUpdate.setStatus(QuestionSubmitStatusEnum.SUCCESS.getValue());
+    questionSubmitUpdate.setJudgeInfo(JSONUtil.toJsonStr(judgeInfo));
+    update = questionFeignClient.updateQuestionSubmitById(questionSubmitUpdate);
+    if (!update) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "判题状态更新失败");
+    }
+    // 修改提交记录个人表的判题状态和判题信息
+    update = questionFeignClient.updateQuestionSubmit(tableName, questionSubmitUpdate);
+    if (!update) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "个人提交表的提交记录的判题状态更新失败");
+    }
+    return QuestionSubmitVO.objToVo(questionFeignClient.getQuestionSubmitById(questionSubmitId));
+}
+```
+
+**3、判题结束后，在MessageConsumer设置个人题目通过表**
+
+`MessageConsumer`
+
+```java
+//指定程序监听的消息队列和确认机制
+@RabbitListener(queues = {QUEUE_NAME}, ackMode = "MANUAL")
+public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag)
+        throws IOException {
+    log.info("receiveMessage message={}", message);
+    long questionSubmitId = Long.parseLong(message);
+    if (message == null) {
+        // 消息为空，则拒绝消息（不重试），进入死信队列
+        channel.basicNack(deliveryTag, false, false);
+        throw new BusinessException(ErrorCode.NULL_ERROR, "消息为空");
+    }
+    try {
+        // 判题
+        judgeService.doJudge(questionSubmitId);
+        // 判断提交状态是否为判题成功
+        QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+        QuestionSubmitVO questionSubmitVO = QuestionSubmitVO.objToVo(questionSubmit);
+        if (!QuestionSubmitStatusEnum.SUCCESS.getValue().equals(questionSubmit.getStatus())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "判题失败");
+        }
+        // 判断题目是否通过
+        if (!JudgeInfoMessagenum.ACCEPTED.getValue().equals(questionSubmitVO.getJudgeInfo().getMessage())) {
+            channel.basicAck(deliveryTag, false);
+            return;
+        }
+        // 设置通过数
+        Long questionId = questionSubmit.getQuestionId();
+        Question question = questionFeignClient.getQuestionById(questionId);
+        Integer acceptedNum = question.getAcceptedNum();
+        Question updateQuestion = new Question();
+        synchronized (question.getAcceptedNum()) {
+            acceptedNum = acceptedNum + 1;
+            updateQuestion.setId(questionId);
+            updateQuestion.setAcceptedNum(acceptedNum);
+            boolean save = questionFeignClient.updateQuestionById(updateQuestion);
+            if (!save) {
+                throw new BusinessException(ErrorCode.OPERATION_ERROR, "保存数据失败");
+            }
+        }
+        // 设置个人题目通过表
+        try {
+            Long userId = questionSubmit.getUserId();
+            String tableName = "accepted_question_" + userId;
+            questionFeignClient.addAcceptedQuestion(tableName, questionId);
+        } catch (Exception e) {
+            log.info("该题目已通过，不用重复添加");
+        }
+        // 确认消息
+        channel.basicAck(deliveryTag, false);
+    } catch (Exception e) {
+        channel.basicNack(deliveryTag, false, false);
+    }
+}
+```
+
+**4、如果出异常FailMessageConsumer中把题目提交个人表中的提交记录的提交状态修改为失败**
+
+`FailMessageConsumer`
+
+```java
+/**
+ * 监听死信队列
+ *
+ * @param message
+ * @param channel
+ * @param deliveryTag
+ */
+@SneakyThrows
+@RabbitListener(queues = {DLX_QUEUE_NAME}, ackMode = "MANUAL")
+public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) {
+    // 接收到失败的信息
+    log.info("死信队列接受到的消息：{}", message);
+    if (StringUtils.isBlank(message)) {
+        channel.basicNack(deliveryTag, false, false);
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "消息为空");
+    }
+    long questionSubmitId = Long.parseLong(message);
+    QuestionSubmit questionSubmit = questionFeignClient.getQuestionSubmitById(questionSubmitId);
+    if (questionSubmit == null) {
+        channel.basicNack(deliveryTag, false, false);
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "提交的题目信息不存在");
+    }
+    // 把题目提交总表中的提交记录的提交状态修改为失败
+    questionSubmit.setStatus(QuestionSubmitStatusEnum.FAILURE.getValue());
+    boolean update = questionFeignClient.updateQuestionSubmitById(questionSubmit);
+    if (!update) {
+        log.info("处理死信队列消息失败,对应提交的题目id为:{}", questionSubmit.getId());
+        channel.basicNack(deliveryTag, false, false);
+        throw new BusinessException(ErrorCode.PARAMS_ERROR, "处理死信队列消息失败");
+    }
+    // 把题目提交个人表中的提交记录的提交状态修改为失败
+    long userId = questionSubmit.getUserId();
+    String tableName = "question_submit_" + userId;
+    update = questionFeignClient.updateQuestionSubmit(tableName, questionSubmit);
+    if (!update) {
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "处理死信队列消息失败");
+    }
+    // 确认消息
+    channel.basicAck(deliveryTag, false);
+}
+```
+
+
+
+
 
 #### 前端
 

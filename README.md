@@ -10584,6 +10584,8 @@ public class AcceptedQuestion implements Serializable {
 ```
 
 ```java
+package com.luoying.luoojbackendmodel.vo;
+
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.luoying.luoojbackendmodel.entity.Question;
@@ -10622,6 +10624,11 @@ public class QuestionVO implements Serializable {
      * 标签列表（json 数组）
      */
     private List<String> tags;
+
+    /**
+     * 题目答案
+     */
+    private String answer;
 
     /**
      * 题目提交数
@@ -10723,7 +10730,7 @@ public class QuestionVO implements Serializable {
 
 ##### 准备Mapper
 
-（新增记录，查询所有记录，更新记录，判断表是否存在，删除表，创建表）
+（新增记录，查询记录，更新记录，判断表是否存在，删除表，创建表）
 
 ```java
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
@@ -10807,12 +10814,23 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
     int addQuestionSubmit(@Param("tableName") String tableName, @Param("questionSubmit") QuestionSubmit questionSubmit);
 
     /**
-     * 根据 个人提交表 获取该用户所有通过的题目
-     *
+     * 根据 个人提交表 和题目id 获取用户该题目的提交数量
      * @param tableName
+     * @param questionId
      * @return
      */
-    List<QuestionSubmit> queryQuestionSubmitList(@Param("tableName") String tableName);
+    long countQuestionSubmitAll(@Param("tableName") String tableName,@Param("questionId") long questionId);
+
+    /**
+     * 根据 个人提交表 页面大小 开始号 语言 题目id  获取该用户的提交记录
+     * @param tableName
+     * @param size
+     * @param offset
+     * @param language
+     * @param questionId
+     * @return
+     */
+    List<QuestionSubmit> queryQuestionSubmitList(@Param("tableName") String tableName, @Param("size") long size, @Param("offset") long offset, @Param("language") String language, @Param("questionId") long questionId);
 
     /**
      * 根据 个人提交表 和 提交记录id 更新该用户的提交记录
@@ -10944,10 +10962,24 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
                 #{questionSubmit.status,jdbcType=INTEGER})
     </insert>
 
+    <select id="countQuestionSubmitAll" resultType="java.lang.Long">
+        select count(*) from ${tableName} where questionId = #{questionId}
+    </select>
+
     <select id="queryQuestionSubmitList" parameterType="string"
             resultType="com.luoying.luoojbackendmodel.entity.QuestionSubmit">
         select *
         from ${tableName}
+        <where>
+            <if test="language != null">
+                language = #{language}
+            </if>
+            <if test="questionId != null">
+                and questionId = #{questionId}
+            </if>
+        </where>
+        order by createTime desc
+        LIMIT #{size} OFFSET #{offset}
     </select>
 
     <update id="updateQuestionSubmit">
@@ -10983,6 +11015,7 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
         where table_name = #{tableName}
     </select>
 
+
     <update id="dropQuestionSubmitTable" parameterType="string">
         DROP TABLE IF EXISTS ${tableName}
     </update>
@@ -11015,7 +11048,43 @@ public interface QuestionSubmitMapper extends BaseMapper<QuestionSubmit> {
         isDelete
     </sql>
 </mapper>
+```
 
+##### 分页查询个人提交记录（单题）
+
+```java
+@Resource
+private QuestionSubmitMapper questionSubmitMapper;
+/**
+ * 分页获取个人题目提交列表
+ *
+ * @param questionSubmitQueryRequest
+ * @param request
+ * @return
+ */
+@PostMapping("/question_submit/my/list/page")
+public BaseResponse<Page<QuestionSubmitVO>> listMyQuestionSubmitByPage(@RequestBody QuestionSubmitQueryRequest questionSubmitQueryRequest,
+                                                                       HttpServletRequest request) {
+    long current = questionSubmitQueryRequest.getCurrent();
+    long size = questionSubmitQueryRequest.getPageSize();
+    String language = questionSubmitQueryRequest.getLanguage();
+    Long questionId = questionSubmitQueryRequest.getQuestionId();
+    User loginUser = userFeignClient.getLoginUser(request);
+    // 限制爬虫
+    ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+    // 查询
+    Long userId = loginUser.getId();
+    String tableName = "question_submit_" + userId;
+    List<QuestionSubmit> questionSubmitList = questionSubmitMapper.queryQuestionSubmitList(tableName, size, (current - 1) * size, language, questionId);
+    long total = questionSubmitMapper.countQuestionSubmitAll(tableName, questionId);
+    
+    Page<QuestionSubmit> questionPage = new Page<>();
+    questionPage.setRecords(questionSubmitList);
+    questionPage.setCurrent(current);
+    questionPage.setSize(size);
+    questionPage.setTotal(total);
+    return ResultUtils.success(questionSubmitService.getQuestionSubmitVOPage(questionPage, loginUser));
+}
 ```
 
 ##### 修改题目查询
@@ -11540,9 +11609,9 @@ public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.
 
 
 
-
-
 #### 前端
+
+`QuestionsView`
 
 **修改columns**
 

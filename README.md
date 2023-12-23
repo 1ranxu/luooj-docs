@@ -7587,7 +7587,7 @@ public Boolean updateQuestionById(@RequestBody Question question){
   {{
     `${
       record.submitNum
-        ? (record.acceptedNum / record.submitNum) * 100
+        ? (record.acceptedNum / record.submitNum).toFixed(4) * 100
         : "0"
     }%(${record.acceptedNum}/${record.submitNum})`
   }}
@@ -8004,13 +8004,6 @@ const onChange = async (_: never, currentFile: FileItem) => {
       layout="inline"
       style="justify-content: center; align-content: center; margin: 25px"
     >
-      <a-form-item field="questionId" label="题号" tooltip="请输入题号">
-        <a-input
-          v-model="searchParams.questionId"
-          placeholder="请输入题号"
-          style="min-width: 280px"
-        />
-      </a-form-item>
       <a-form-item field="language" label="编程语言" tooltip="请选择编程语言">
         <a-select
           v-model="searchParams.language"
@@ -8093,7 +8086,7 @@ const onChange = async (_: never, currentFile: FileItem) => {
       </template>
 
       <template #createTime="{ record }">
-        {{ moment(record.createTime).format("YYYY-MM-DD hh:mm:ss") }}
+        {{ moment(record.createTime).format("YYYY-MM-DD HH:mm:ss") }}
       </template>
     </a-table>
   </div>
@@ -8107,10 +8100,12 @@ const columns = [
   {
     title: "提交号",
     dataIndex: "id",
+    align: "center",
   },
   {
     title: "编程语言",
     dataIndex: "language",
+    align: "center",
   },
   {
     title: "判题信息",
@@ -8118,16 +8113,19 @@ const columns = [
       {
         title: "判题结果",
         slotName: "message",
+        align: "center",
         width: 100,
       },
       {
         title: "内存消耗",
         slotName: "memory",
+        align: "center",
         width: 100,
       },
       {
         title: "时间消耗",
         slotName: "time",
+        align: "center",
         width: 100,
       },
     ],
@@ -8135,18 +8133,22 @@ const columns = [
   {
     title: "提交状态",
     slotName: "status",
+    align: "center",
   },
   {
     title: "题目",
     slotName: "questionTitle",
+    align: "center",
   },
   {
     title: "提交者",
     slotName: "userName",
+    align: "center",
   },
   {
     title: "提交时间",
     slotName: "createTime",
+    align: "center",
   },
 ];
 ```
@@ -8471,16 +8473,44 @@ res.data.records.map((record: any) => {
 });
 ```
 
+**4、为题目标题添加插槽**
+
+可以点击标题跳转到做题页面
+
+```vue
+<template #title="{ record }">
+  <a-button type="text" @click="toDoQuestion(record)"
+    >{{ record.title }}
+  </a-button>
+</template>
+```
+
+```ts
+/**
+ * 跳转到做题页面
+ * @param question
+ */
+const toDoQuestion = (question: Question) => {
+  router.push({
+    path: `/view/question/${question.id}`,
+  });
+};
+```
+
+**5、修改columns**
+
 ```ts
 const columns = [
   {
     title: "id",
     dataIndex: "id",
+    align: "center",
     width: 190,
   },
   {
     title: "题目",
-    dataIndex: "title",
+    slotName: "title",
+    align: "center",
     width: 180,
   },
   /*  {
@@ -8490,6 +8520,7 @@ const columns = [
   {
     title: "标签",
     slotName: "tags",
+    align: "center",
     width: 20,
   },
   /*  {
@@ -8499,11 +8530,13 @@ const columns = [
   {
     title: "提交数",
     dataIndex: "submitNum",
+    align: "center",
     width: 90,
   },
   {
     title: "通过数",
     dataIndex: "acceptedNum",
+    align: "center",
     width: 90,
   },
   {
@@ -8513,16 +8546,19 @@ const columns = [
       {
         title: "时间限制",
         dataIndex: "timeLimit",
+        align: "center",
         width: 100,
       },
       {
         title: "内存限制",
         dataIndex: "memoryLimit",
+        align: "center",
         width: 100,
       },
       {
         title: "堆栈限制",
         dataIndex: "stackLimit",
+        align: "center",
         width: 100,
       },
     ],
@@ -8534,21 +8570,24 @@ const columns = [
   {
     title: "创建者id",
     dataIndex: "userId",
+    align: "center",
   },
   {
     title: "创建时间",
     slotName: "createTime",
+    align: "center",
     width: 110,
   },
   {
     title: "操作",
     slotName: "optional",
+    align: "center",
     width: 80,
   },
 ];
 ```
 
-**3、添加搜索框**
+**6、添加搜索框**
 
 ```vue
 <a-form
@@ -8595,7 +8634,7 @@ const doSearch = () => {
 };
 ```
 
-**4、添加每页大小选择和页面跳转**
+**7、添加每页大小选择和页面跳转**
 
 ```vue
 <a-table
@@ -8627,7 +8666,7 @@ const onPageSizeChange = (size: number) => {
 };
 ```
 
-**5、优化操作选项**
+**8、优化操作选项**
 
 **如果使用气泡确认框 `a-popconfirm` 报错  `ResizeObserver loop completed with undelivered notifications`，可能是未设置宽度**
 
@@ -8748,27 +8787,32 @@ const onPageSizeChange = (size: number) => {
 
 **5、修改columns**
 
-```vue
+```ts
 const columns = [
   {
-    title: "题号",
-    slotName: "id",
+    title: "状态",
+    slotName: "isAccepted",
+    align: "center",
   },
   {
     title: "题目",
     slotName: "title",
+    align: "center",
   },
   {
     title: "标签",
     slotName: "tags",
+    align: "center",
   },
   {
-    title: "通过率",vue
+    title: "通过率",
     slotName: "acceptedRate",
+    align: "center",
   },
   {
     title: "创建时间",
     slotName: "createTime",
+    align: "center",
   },
 ];
 ```
@@ -11615,27 +11659,32 @@ public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.
 
 **修改columns**
 
-```vue
+```ts
 const columns = [
   {
     title: "状态",
     slotName: "isAccepted",
+    align: "center",
   },
   {
     title: "题目",
     slotName: "title",
+    align: "center",
   },
   {
     title: "标签",
     slotName: "tags",
+    align: "center",
   },
   {
     title: "通过率",
     slotName: "acceptedRate",
+    align: "center",
   },
   {
     title: "创建时间",
     slotName: "createTime",
+    align: "center",
   },
 ];
 ```

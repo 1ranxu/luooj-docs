@@ -6392,27 +6392,50 @@ monaco在读写值时，要使用 toRaw(编辑器示例) 的语法来执行操�
 
 ```ts
 <template>
-  <div id="code-editor" ref="codeEditorRef"></div>
+  <div
+    id="code-editor"
+    ref="codeEditorRef"
+    style="min-height: 500px; height: 70vh"
+  ></div>
 </template>
 
 <script setup lang="ts">
 import * as monaco from "monaco-editor";
-import { onMounted, ref, toRaw, withDefaults, defineProps } from "vue";
-// 这是为了方便拿到code-editor元素
+import { onMounted, ref, toRaw, withDefaults, defineProps, watch } from "vue";
+
 const codeEditorRef = ref();
 const codeEditor = ref();
+
 /**
  * 定义组件属性的类型
  */
 interface Props {
   value: string;
   hanndleChange: (v: string) => void;
+  language: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   value: () => "",
   hanndleChange: (v: string) => console.log(v),
+  language: () => "java",
 });
+
+watch(
+  () => props.language,
+  () => {
+    console.log(props.language);
+    if (!codeEditorRef.value) {
+      return;
+    }
+    if (codeEditor.value) {
+      monaco.editor.setModelLanguage(
+        toRaw(codeEditor.value).getModel(),
+        props.language
+      );
+    }
+  }
+);
 
 onMounted(() => {
   if (!codeEditorRef.value) {
@@ -6420,7 +6443,7 @@ onMounted(() => {
   }
   codeEditor.value = monaco.editor.create(codeEditorRef.value, {
     value: props.value,
-    language: "java",
+    language: props.language,
     automaticLayout: true,
     colorDecorators: true,
     minimap: {
@@ -8845,8 +8868,6 @@ const columns = [
 </template>
 ```
 
-
-
 ## 扩展
 
 ### 使用redisson进行限流
@@ -10774,7 +10795,7 @@ public class QuestionVO implements Serializable {
 
 ##### 准备Mapper
 
-（新增记录，查询记录，更新记录，判断表是否存在，删除表，创建表）
+（新增记录，查询记录总数，查询记录，更新记录，判断表是否存在，删除表，创建表）
 
 ```java
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
@@ -11707,6 +11728,774 @@ const columns = [
 ![image-20231221175422860](assets/image-20231221175422860.png)
 
 ![image-20231221175446564](assets/image-20231221175446564.png)
+
+
+
+### 优化做题页
+
+#### 后端
+
+##### 准备实体类
+
+```java
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class RunCodeRequest {
+    private String input;
+
+    private String code;
+
+    private String language;
+}
+```
+
+```java
+import com.luoying.luoojbackendmodel.dto.questionsubmit.QuestionSubmitJudgeInfo;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class RunCodeResponse {
+    private String output;
+
+    /**
+     * 执行信息
+     */
+    private String message;
+
+    /**
+     * 执行状态
+     */
+    private Integer status;
+
+    /**
+     * 判题信息
+     */
+    private QuestionSubmitJudgeInfo judgeInfo;
+}
+```
+
+##### 判题服务提供接口
+
+```java
+import com.luoying.luoojbackendmodel.codesanbox.ExecuteCodeRequest;
+import com.luoying.luoojbackendmodel.codesanbox.ExecuteCodeResponse;
+import com.luoying.luoojbackendmodel.vo.QuestionSubmitVO;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+
+/**
+ * 判题服务
+ */
+@FeignClient(name = "luooj-backend-judge-service", path = "/api/judge/inner")
+public interface JudgeFeignClient {
+    @PostMapping("/do")
+    QuestionSubmitVO doJudge(@RequestParam("questionSubmitId") long questionSubmitId);
+
+    @PostMapping("/run")
+    ExecuteCodeResponse runOnline(@RequestBody ExecuteCodeRequest executeCodeRequest);
+}
+```
+
+```java
+import com.luoying.luoojbackendjudgeservice.judge.JudgeService;
+import com.luoying.luoojbackendjudgeservice.judge.sandbox.CodeSandBox;
+import com.luoying.luoojbackendjudgeservice.judge.sandbox.CodeSandBoxFactory;
+import com.luoying.luoojbackendjudgeservice.judge.sandbox.CodeSandBoxProxy;
+import com.luoying.luoojbackendmodel.codesanbox.ExecuteCodeRequest;
+import com.luoying.luoojbackendmodel.codesanbox.ExecuteCodeResponse;
+import com.luoying.luoojbackendmodel.vo.QuestionSubmitVO;
+import com.luoying.luoojbackendserviceclient.service.JudgeFeignClient;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import javax.annotation.Resource;
+
+/**
+ * 该服务仅内部调用，不是给前端的
+ */
+@RestController
+@RequestMapping("/inner")
+public class JudgeInnerController implements JudgeFeignClient {
+    @Resource
+    private JudgeService judgeService;
+
+    @Value("${codesandbox.type:example}")
+    private String type;
+
+    @Override
+    @PostMapping("/do")
+    public QuestionSubmitVO doJudge(long questionSubmitId) {
+        return judgeService.doJudge(questionSubmitId);
+    }
+
+
+    @Override
+    @PostMapping("/run")
+    public ExecuteCodeResponse runOnline(@RequestBody ExecuteCodeRequest executeCodeRequest) {
+        CodeSandBox codeSandBox = CodeSandBoxFactory.newInstance(type);
+        CodeSandBoxProxy codeSandBoxProxy = new CodeSandBoxProxy(codeSandBox);
+        ExecuteCodeResponse executeCodeResponse = codeSandBoxProxy.executeCode(executeCodeRequest);
+        return executeCodeResponse;
+    }
+}
+```
+
+##### 题目服务调用接口
+
+```java
+@Resource
+private JudgeFeignClient judgeFeignClient;
+@PostMapping("/question/run/online")
+public BaseResponse<RunCodeResponse> questionRunOnline(@RequestBody RunCodeRequest runCodeRequest) {
+    List<String> inputList = Arrays.asList(runCodeRequest.getInput());
+    ExecuteCodeRequest executeCodeRequest =
+            ExecuteCodeRequest.builder()
+                    .code(runCodeRequest.getCode())
+                    .language(runCodeRequest.getLanguage())
+                    .inputList(inputList)
+                    .build();
+    ExecuteCodeResponse executeCodeResponse = judgeFeignClient.runOnline(executeCodeRequest);
+    List<String> outputList = Optional.ofNullable(executeCodeResponse.getOutputList()).orElse(Arrays.asList(""));
+    RunCodeResponse runCodeResponse = RunCodeResponse.builder()
+            .output(outputList.get(0))
+            .message(executeCodeResponse.getMessage())
+            .status(executeCodeResponse.getStatus())
+            .judgeInfo(executeCodeResponse.getJudgeInfo())
+            .build();
+    return ResultUtils.success(runCodeResponse);
+}
+```
+
+
+
+#### 前端
+
+**1、安装vue-codemirror 及插件** https://github.com/surmon-china/vue-codemirror
+
+```sh
+yarn add codemirror vue-codemirror
+```
+
+```sh
+yarn add @codemirror/lang-cpp
+yarn add @codemirror/lang-java
+```
+
+```sh
+yarn add @codemirror/theme-one-dark
+```
+
+**2、修改页面**
+
+```vue
+<template>
+  <div id="viewQuestionView">
+    <a-row :gutter="[24, 24]">
+      <!--左栏-->
+      <a-col :md="12" xs="24">
+        <a-tabs default-active-key="question">
+          <!--题目详情-->
+          <a-tab-pane key="question" title="题目详情">
+            <a-scrollbar style="height: 580px; overflow: auto">
+              <a-card v-if="question" :title="question.title">
+                <a-space direction="vertical" size="large" fill>
+                  <a-descriptions
+                    title="判题条件"
+                    :column="{ xs: 1, md: 2, lg: 3 }"
+                  >
+                    <a-descriptions-item label="时间限制">
+                      {{ question.judgeConfig.timeLimit }}
+                    </a-descriptions-item>
+                    <a-descriptions-item label="内存限制">
+                      {{ question.judgeConfig.timeLimit }}
+                    </a-descriptions-item>
+                    <a-descriptions-item label="堆栈限制">
+                      {{ question.judgeConfig.timeLimit }}
+                    </a-descriptions-item>
+                  </a-descriptions>
+                </a-space>
+
+                <MDViewer :value="question.content || ''" />
+
+                <template #extra>
+                  <a-space wrap>
+                    <a-tag
+                      v-for="(tag, index) of question.tags"
+                      :key="index"
+                      color="green"
+                      >{{ tag }}
+                    </a-tag>
+                  </a-space>
+                </template>
+              </a-card>
+            </a-scrollbar>
+          </a-tab-pane>
+          <!--评论区-->
+          <a-tab-pane key="comment" title="评论" disabled> 评论区</a-tab-pane>
+          <!--题解-->
+          <a-tab-pane key="answers" title="题解">
+            <a-card v-if="question">
+              <MDViewer :value="question.answer || ''" />
+            </a-card>
+          </a-tab-pane>
+          <!--提交记录-->
+          <a-tab-pane key="history" title="提交记录">
+            <a-table
+              :columns="columns"
+              :data="dataList"
+              :pagination="{
+                showTotal: true,
+                current: searchParams.current,
+                pageSize: searchParams.pageSize,
+                total,
+                showPageSize: true,
+              }"
+              @page-change="onPageChange"
+              @pageSizeChange="onPageSizeChange"
+              @row-click="handleHistoryRecordClick"
+            >
+              <template #message="{ record }">
+                <a-tag
+                  v-if="
+                    record.judgeInfo.message === JudgeInfoMessageEnum.ACCEPTED
+                  "
+                  color="blue"
+                  bordered
+                >
+                  {{ record.judgeInfo.message }}
+                </a-tag>
+                <a-tag
+                  v-else-if="
+                    record.judgeInfo.message === JudgeInfoMessageEnum.WAITING
+                  "
+                  color="green"
+                  bordered
+                >
+                  {{ record.judgeInfo.message }}
+                </a-tag>
+                <a-tag v-else color="red" bordered>
+                  {{ record.judgeInfo.message }}
+                </a-tag>
+              </template>
+              <template #memory="{ record }">
+                {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }}
+                K
+              </template>
+
+              <template #time="{ record }">
+                {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }} ms
+              </template>
+
+              <template #createTime="{ record }">
+                {{ moment(record.createTime).format("YYYY-MM-DD HH:mm:ss") }}
+              </template>
+            </a-table>
+          </a-tab-pane>
+        </a-tabs>
+      </a-col>
+      <!--代码编辑-->
+      <a-col :md="12" xs="24" v-if="!historyVisible" style="margin-top: 38px">
+        <a-card>
+          <a-form :model="form" layout="inline">
+            <!--语言选择-->
+            <a-form-item field="language">
+              <a-space>
+                <a-select
+                  v-model="form.language"
+                  :style="{ width: '150px' }"
+                  placeholder="请选择语言"
+                >
+                  <a-option v-for="language in languages" :key="language"
+                    >{{ language }}
+                  </a-option>
+                </a-select>
+                <!--控制台按钮，用于打开控制台自测代码-->
+                <a-button @click="handleConsoleClick">控制台</a-button>
+                <!--提交按钮-->
+                <a-button
+                  type="primary"
+                  status="success"
+                  style="min-width: 80px"
+                  @click="doQuestionSubmit"
+                >
+                  提交
+                </a-button>
+              </a-space>
+            </a-form-item>
+          </a-form>
+          <!--代码编辑器-->
+          <CodeEditor
+            :value="form.code as string"
+            :language="form.language as string"
+            :hanndle-change="onCodeChange"
+          />
+        </a-card>
+      </a-col>
+      <!--提交记录详情-->
+      <a-col :md="12" xs="24" v-if="historyVisible" style="margin-top: 38px">
+        <a-card>
+          <!--关闭按钮-->
+          <a-button
+            type="text"
+            @click="
+              () => {
+                historyVisible = false;
+              }
+            "
+          >
+            <template #icon>
+              <icon-close />
+            </template>
+          </a-button>
+          <!--提交记录的一些信息-->
+          <a-space direction="vertical" size="large" fill>
+            <a-descriptions :column="{ xs: 1, md: 2, lg: 3 }">
+              <a-descriptions-item label="语言">
+                <a-tag color="arcoblue">
+                  {{ historyRecord.language }}
+                </a-tag>
+              </a-descriptions-item>
+              <a-descriptions-item label="执行时间">
+                {{
+                  historyRecord.judgeInfo.time
+                    ? historyRecord.judgeInfo.time
+                    : 0
+                }}
+                ms
+              </a-descriptions-item>
+              <a-descriptions-item label="消耗内存">
+                {{
+                  historyRecord.judgeInfo.memory
+                    ? historyRecord.judgeInfo.memory
+                    : 0
+                }}
+                K
+              </a-descriptions-item>
+            </a-descriptions>
+          </a-space>
+          <!--展示提交代码-->
+          <Codemirror
+            v-model="historyRecord.code"
+            :style="{ height: '500px' }"
+            :autofocus="false"
+            :indent-with-tab="true"
+            :tab-size="2"
+            :extensions="extensions"
+            disabled
+          />
+        </a-card>
+      </a-col>
+    </a-row>
+    <!--控制台-->
+    <a-drawer
+      :height="500"
+      :visible="consoleVisible"
+      :placement="'bottom'"
+      :hide-cancel="true"
+      :ok-text="'运行'"
+      :ok-loading="runLoading"
+      @ok="handleRunClick"
+      @cancel="handleConsoleClose"
+      esc-to-close
+    >
+      <template #title> 自测运行 Esc（关闭）</template>
+
+      <a-space>
+        <!--自定义输入-->
+        <a-card>
+          自定义输入：
+          <a-divider />
+          <a-textarea
+            @input="
+              (value :any) => {
+                runCodeRequest.input = value;
+              }
+            "
+            style="
+              height: 250px;
+              width: 690px;
+              background-color: rgba(91, 91, 91, 0);
+              border: white;
+            "
+          ></a-textarea>
+        </a-card>
+        <!--运行结果 -->
+        <a-card>
+          运行结果：
+          <a-divider />
+          <a-textarea
+            v-model="runCodeResponse.output"
+            style="
+              height: 250px;
+              width: 690px;
+              background-color: rgba(91, 91, 91, 0);
+              border: white;
+            "
+          ></a-textarea>
+        </a-card>
+      </a-space>
+    </a-drawer>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { defineProps, onMounted, ref, watchEffect, withDefaults } from "vue";
+import {
+  QuestionControllerService,
+  QuestionSubmitAddRequest,
+  QuestionSubmitQueryRequest,
+  QuestionVO,
+} from "../../../generated";
+import message from "@arco-design/web-vue/es/message";
+import CodeEditor from "@/components/CodeEditor.vue";
+import MDViewer from "@/components/MDViewer.vue";
+import JudgeInfoMessageEnum from "@/enums/JudgeInfoMessageEnum";
+import moment from "moment/moment";
+import { Codemirror } from "vue-codemirror";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { cpp } from "@codemirror/lang-cpp";
+import java from "@codemirror/lang-java";
+
+interface Props {
+  id: string;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  id: () => "",
+});
+// 提交记录详情页面是否可见
+const historyVisible = ref(false);
+// 提交记录
+const historyRecord = ref({});
+// 自测运行代码是否正在运行
+const runLoading = ref(false);
+// 控制台是否可见
+const consoleVisible = ref(false);
+// CodeMirror的一些配置
+const extensions = [cpp(), oneDark];
+// 自测运行代码的请求负载
+const runCodeRequest = ref({ input: "" });
+// 自测运行代码的请求响应
+const runCodeResponse = ref({ output: "", message: "" });
+
+/**
+ * 点击按钮打开控制台
+ */
+const handleConsoleClick = () => {
+  consoleVisible.value = true;
+};
+/**
+ * 自测运行代码
+ */
+const handleRunClick = async () => {
+  runLoading.value = true;
+  const res = await QuestionControllerService.runQuestionOnlineUsingPost({
+    input: runCodeRequest.value.input,
+    code: form.value.code,
+    language: form.value.language,
+  });
+  if (res.code === 0) {
+    runLoading.value = false;
+    runCodeResponse.value.output = res.data.output
+      ? res.data.output
+      : res.data.message;
+  }
+};
+/**
+ * 关闭控制台
+ */
+const handleConsoleClose = () => {
+  consoleVisible.value = false;
+};
+/**
+ * 点击单条提交记录时的处理
+ * @param value
+ */
+const handleHistoryRecordClick = (value: any) => {
+  historyVisible.value = true;
+  historyRecord.value = value;
+};
+// 查询个人提交记录的参数
+const searchParams = ref<QuestionSubmitQueryRequest>({
+  language: undefined,
+  questionId: undefined,
+  pageSize: 10,
+  current: 1,
+});
+// 个人提交记录总数
+const total = ref(0);
+// 个人提交记录
+const dataList = ref([]);
+// 题目
+const question = ref<QuestionVO>();
+// 提交代码时的请求负载
+const form = ref<QuestionSubmitAddRequest>({
+  language: "java",
+  code: "",
+  questionId: -1,
+});
+
+// 支持语言
+const languages = ref<string[]>();
+
+/**
+ * 获取题目
+ */
+const loadData1 = async () => {
+  const res = await QuestionControllerService.getQuestionVoByIdUsingGet(
+    props.id as any
+  );
+  if (res.code === 0) {
+    question.value = res.data;
+  } else {
+    message.error("加载失败，" + res.message);
+  }
+};
+
+/**
+ * 获取个人提交记录
+ */
+const loadData2 = async () => {
+  const res =
+    await QuestionControllerService.listMyQuestionSubmitByPageUsingPost({
+      ...searchParams.value,
+      questionId: props.id as any,
+    });
+  if (res.code === 0) {
+    dataList.value = res.data.records;
+    total.value = res.data.total;
+  } else {
+    message.error("加载失败，" + res.message);
+  }
+};
+
+/**
+ * 监听loadData函数所使用的变量的变化，改变时触发页面的重新加载
+ */
+watchEffect(() => {
+  loadData2();
+});
+
+onMounted(async () => {
+  loadData1();
+  loadData2();
+  // 从后端获取支持语言
+  const res = await QuestionControllerService.getCodeLanguageUsingGet();
+  if (res.code === 0) {
+    languages.value = res.data;
+  }
+  // console.log(res);
+});
+
+/**
+ * 个人提交记录需要展示的列
+ */
+const columns = [
+  {
+    title: "判题结果",
+    slotName: "message",
+    align: "center",
+    width: 100,
+  },
+  {
+    title: "提交时间",
+    slotName: "createTime",
+    align: "center",
+  },
+  {
+    title: "编程语言",
+    dataIndex: "language",
+    align: "center",
+  },
+  {
+    title: "执行用时",
+    slotName: "time",
+    align: "center",
+    width: 100,
+  },
+  {
+    title: "消耗内存",
+    slotName: "memory",
+    align: "center",
+    width: 100,
+  },
+];
+
+/**
+ * 提交代码
+ * @constructor
+ */
+const doQuestionSubmit = async () => {
+  if (!question.value?.id) {
+    return;
+  }
+  const res = await QuestionControllerService.doQuestionSubmitUsingPost({
+    ...form.value,
+    questionId: question.value?.id,
+  });
+  if (res.code === 0) {
+    message.success("提交成功");
+  } else {
+    message.error("提交失败，" + res.message);
+  }
+};
+
+/**
+ * 代码编辑器内容切换
+ * @param value
+ */
+const onCodeChange = (value: string) => {
+  form.value.code = value;
+};
+/**
+ * 个人提交记录页面切换
+ * @param page
+ */
+const onPageChange = (page: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: page,
+  };
+};
+/**
+ * 个人提交记录页面大小切换
+ * @param size
+ */
+const onPageSizeChange = (size: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    pageSize: size,
+  };
+};
+</script>
+
+<style scoped>
+#viewQuestionView {
+  margin: 0 auto;
+}
+
+#viewQuestionView .arco-space-horizontal .arco-space-item {
+  margin-bottom: 0 !important;
+}
+</style>
+```
+
+**3、提供自定义类型**
+
+```ts
+export type RunCodeRequest = {
+  code?: string;
+  language?: string;
+  input?: string;
+};
+
+```
+
+```ts
+import { QuestionSubmitJudgeInfo } from "./QuestionSubmitJudgeInfo";
+
+export type RunCodeResponse = {
+  output?: string;
+  message?: string;
+  status?: number;
+  judgeInfo?: QuestionSubmitJudgeInfo;
+};
+```
+
+**4、为QuestionVO类型添加answer字段，方便展示题解**
+
+```ts
+export type QuestionVO = {
+  acceptedNum?: number;
+  content?: string;
+  createTime?: string;
+  favourNum?: number;
+  id?: number;
+  judgeConfig?: QuestionJudgeCconfig;
+  submitNum?: number;
+  tags?: Array<string>;
+  answer: string;ts
+  thumbNum?: number;
+  title?: string;
+  updateTime?: string;
+  userId?: number;
+  userVO?: UserVO;
+};
+```
+
+**5、QuestionControllerService提供方法**
+
+`获取个人提交记录`
+
+```ts
+/**
+ * listMyQuestionSubmitByPageUsingPost
+ * @param questionSubmitQueryRequest questionSubmitQueryRequest
+ * @returns BaseResponse_Page_QuestionSubmitVO_ OK
+ * @returns any Created
+ * @throws ApiError
+ */
+public static listMyQuestionSubmitByPageUsingPost(
+  questionSubmitQueryRequest: QuestionSubmitQueryRequest,
+): CancelablePromise<BaseResponse_Page_QuestionSubmitVO_ | any> {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api/question/question_submit/my/list/page',
+        body: questionSubmitQueryRequest,
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },
+    });
+}
+```
+
+`自测运行代码`
+
+```ts
+/**
+ * runQuestionOnlineUsingPost
+ * @param executeCodeRequest executeCodeRequest
+ * @returns BaseResponse_long_ OK
+ * @returns any Created
+ * @throws ApiError
+ */
+public static runQuestionOnlineUsingPost(
+  runCodeRequest: RunCodeRequest,
+): CancelablePromise<RunCodeResponse | any> {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api/question/question/run/online',
+        body: runCodeRequest,
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },ts
+    });
+}
+```
+
+
 
 ## 扩展思路
 

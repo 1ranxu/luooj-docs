@@ -6716,6 +6716,8 @@ http://momentjs.cn/
 
 ![image-20231117154343680](assets/image-20231117154343680.png)
 
+
+
 ## 优化
 
 ### 前端全局拦截优化
@@ -6833,7 +6835,7 @@ return executeCodeResponse;
 
 
 
-### 优化右上角样式
+### 优化GlobalHeader
 
 1、右上角显示头像
 
@@ -6995,6 +6997,10 @@ if (
   return;
 }
 ```
+
+![image-20231225111920236](assets/image-20231225111920236.png)
+
+
 
 ### 新增个人信息页
 
@@ -7219,6 +7225,10 @@ const onChange = async (_: never, currentFile: FileItem) => {
 }
 </style>
 ```
+
+![image-20231225111841999](assets/image-20231225111841999.png)
+
+
 
 ### 微服务项目添加文件服务
 
@@ -7486,6 +7496,8 @@ public class FileController {
 }
 ```
 
+
+
 ### 优化通过数，提交数
 
 #### 设置提交数
@@ -7616,6 +7628,8 @@ public Boolean updateQuestionById(@RequestBody Question question){
   }}
 </template>
 ```
+
+
 
 ### 新增用户管理页
 
@@ -8003,6 +8017,10 @@ const onChange = async (_: never, currentFile: FileItem) => {
 </style>
 ```
 
+![image-20231225111748275](assets/image-20231225111748275.png)
+
+
+
 ### 优化提交记录页面
 
 #### 前端
@@ -8011,7 +8029,7 @@ const onChange = async (_: never, currentFile: FileItem) => {
 
 ```vue
 <a-form-item>
-  <a-button type="primary" status="success" @click="loadData"
+  <a-button type="outline" shape="round" status="normal" @click="loadData"
     >刷新
   </a-button>
 </a-form-item>
@@ -8220,6 +8238,19 @@ export default JudgeInfoMessageEnum;
 
 ```ts
 /**
+ * 页面切换
+ * @param page
+ */
+const onPageChange = (page: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: page,
+  };
+};
+```
+
+```ts
+/**
  * 页面大小切换
  * @param size
  */
@@ -8239,13 +8270,6 @@ const onPageSizeChange = (size: number) => {
   layout="inline"
   style="justify-content: center; align-content: center; margin: 25px"
 >
-  <a-form-item field="questionId" label="题号" tooltip="请输入题号">
-    <a-input
-      v-model="searchParams.questionId"
-      placeholder="请输入题号"
-      style="min-width: 280px"
-    />
-  </a-form-item>
   <a-form-item field="language" label="编程语言" tooltip="请选择编程语言">
     <a-select
       v-model="searchParams.language"
@@ -8268,8 +8292,6 @@ const onPageSizeChange = (size: number) => {
   </a-form-item>
 </a-form>
 ```
-
-
 
 #### 后端
 
@@ -8316,6 +8338,10 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
 }
 ```
 
+![image-20231225103518474](assets/image-20231225103518474.png)
+
+
+
 ### 优化创建题目页
 
 **1、根据路由展示不同标题**
@@ -8338,10 +8364,10 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
         <h2 v-else>创建题目</h2>
       </template>
       <a-form :model="form" label-align="left">
-        <a-form-item field="title" label="题目标题">
+        <a-form-item field="title" label="题目标题" tooltip="请输入标题">
           <a-input v-model="form.title" placeholder="请输入题目标题" />
         </a-form-item>
-        <a-form-item field="tags" label="标签">
+        <a-form-item field="tags" label="标签" tooltip="请输入标签">
           <a-input-tag
             v-model="form.tags"
             placeholder="请输入标签"
@@ -8357,6 +8383,7 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
           <MDEditor :value="form.answer" :hanndle-change="onAnswerChange" />
         </a-form-item>
         <a-form-item
+          tooltip="请设置配置"
           label="判题配置"
           :content-flex="false"
           :merge-props="false"
@@ -8395,6 +8422,7 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
           </a-space>
         </a-form-item>
         <a-form-item
+          tooltip="请设置用例"
           label="判题用例"
           :content-flex="false"
           :merge-props="false"
@@ -8463,6 +8491,12 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
 }
 ```
 
+![image-20231225103419642](assets/image-20231225103419642.png)
+
+![image-20231225103434603](assets/image-20231225103434603.png)
+
+![image-20231225103441129](assets/image-20231225103441129.png)
+
 
 
 ### 优化题目管理页
@@ -8486,14 +8520,27 @@ public Page<QuestionSubmitVO> getQuestionSubmitVOPage(Page<QuestionSubmit> quest
 
 **3、优化判题配置展示样式**
 
+把每道题目的judgeConfig从json字符串转为对象，再把judgeConfig的每个属性单独加入到每道题目中
+
 ```ts
-res.data.records.map((record: any) => {
-  const judgeConfig = JSON.parse(record.judgeConfig)
-  record["timeLimit"] = judgeConfig.timeLimit;
-  record["memoryLimit"] = judgeConfig.memoryLimit;
-  record["stackLimit"] = judgeConfig.stackLimit;
-  return record;
-});
+const loadData = async () => {
+  const res = await QuestionControllerService.listQuestionByPageUsingPost({
+    ...searchParams.value,
+  });
+  if (res.code === 0) {
+    res.data.records.map(async (record: any) => {
+      const judgeConfig = JSON.parse(record.judgeConfig);
+      record["timeLimit"] = judgeConfig.timeLimit;
+      record["memoryLimit"] = judgeConfig.memoryLimit;
+      record["stackLimit"] = judgeConfig.stackLimit;
+      return record;
+    });
+    dataList.value = res.data.records;
+    total.value = res.data.total;
+  } else {
+    message.error("加载失败，" + res.message);
+  }
+};
 ```
 
 **4、为题目标题添加插槽**
@@ -8641,6 +8688,7 @@ const columns = [
 ```
 
 ```ts
+// 搜索参数
 const searchParams = ref({
   title: "",
   tags: [],
@@ -8648,6 +8696,9 @@ const searchParams = ref({
   current: 1,
 });
 
+/**
+ * 搜索函数
+ */
 const doSearch = () => {
   searchParams.value = {
     ...searchParams.value,
@@ -8677,6 +8728,17 @@ const doSearch = () => {
 ```
 
 ```ts
+/**
+ * 页面切换
+ * @param page
+ */
+const onPageChange = (page: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: page,
+  };
+};
+
 /**
  * 页面大小切换
  * @param size
@@ -8720,6 +8782,8 @@ const onPageSizeChange = (size: number) => {
 </template>
 ```
 
+![image-20231225104651651](assets/image-20231225104651651.png)
+
 
 
 ### 优化浏览题目页
@@ -8745,6 +8809,17 @@ const onPageSizeChange = (size: number) => {
 
 ```ts
 /**
+ * 页面切换
+ * @param page
+ */
+const onPageChange = (page: number) => {
+  searchParams.value = {
+    ...searchParams.value,
+    current: page,
+  };
+};
+
+/**
  * 页面大小切换
  * @param size
  */
@@ -8766,19 +8841,7 @@ const onPageSizeChange = (size: number) => {
 },
 ```
 
-**3、修改做题按钮样式**
-
-```vue
-<template #optional="{ record }">
-  <a-space>
-    <a-button type="outline" shape="round" @click="toDoQuestion(record)"
-      >做题
-    </a-button>
-  </a-space>
-</template>
-```
-
-**4、修改搜索框样式**
+**3、修改搜索框样式**
 
 ```vue
 <a-form
@@ -8808,7 +8871,7 @@ const onPageSizeChange = (size: number) => {
 </a-form>
 ```
 
-**5、修改columns**
+**4、修改columns**
 
 ```ts
 const columns = [
@@ -8840,7 +8903,7 @@ const columns = [
 ];
 ```
 
-**6、修改通过率展示样式**
+**5、修改通过率展示样式**
 
 保留四位小数
 
@@ -8856,7 +8919,7 @@ const columns = [
 </template>
 ```
 
-**7、为题目标题添加插槽**
+**6、为题目标题添加插槽**
 
 可以点击标题跳转到做题页面
 
@@ -8867,6 +8930,10 @@ const columns = [
   </a-button>
 </template>
 ```
+
+![image-20231225105158748](assets/image-20231225105158748.png)
+
+
 
 ## 扩展
 
@@ -9232,7 +9299,7 @@ public LoginUserVO userLogin(String userAccount, String userPassword, HttpServle
     }
     // 3. 记录用户的登录态
     request.getSession().setAttribute(USER_LOGIN_STATE, user);
-    // 4、将登录信息保持在token中，通过JWT生成token(存入id和账号)
+    // 4、将登录信息保存在token中，通过JWT生成token(存入id和账号)
     Map<String, Object> tokenMap = new HashMap<>();
     tokenMap.put("id", user.getId());
     tokenMap.put("userAccount", user.getUserAccount());
@@ -9311,7 +9378,7 @@ const handleSubmit = async () => {
 
 **问题：**编译代码，运行代码时出现的异常信息未封装进ExecuteCodeResponse，导致前端无法展示异常信息
 
-#### 解决命令写死问题
+#### 解决命令写死&异常信息未封装问题
 
 ```java
 @Data
@@ -9324,331 +9391,6 @@ public class CodeSandBoxCmd {
     private String runCmd;
 }
 ```
-
-```java
-import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.util.StrUtil;
-import com.luoying.core.CodeSandBox;
-import com.luoying.model.*;
-import com.luoying.utils.ProcessUtil;
-import lombok.extern.slf4j.Slf4j;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.UUID;
-
-/**
- * 代码沙箱模板
- * 注意每个实现类必须自定义代码存放路径
- */
-@Slf4j
-public abstract class CodeSandBoxTemplate implements CodeSandBox {
-    // 所有用户代码的根目录
-    String globalCodeDirPath;
-    // 对不同语言进行分类存储
-    String prefix;
-    // 代码文件名
-    String globalCodeFileName;
-    // 超时时间
-    private static final long TIMEOUT = 5000L;
-
-    protected CodeSandBoxTemplate(String globalCodeDirPath, String prefix, String globalCodeFileName) {
-        this.globalCodeDirPath = globalCodeDirPath;
-        this.prefix = prefix;
-        this.globalCodeFileName = globalCodeFileName;
-    }
-
-
-    /**
-     * 每个实现类必须实现编译以及运行的cmd
-     *
-     * @param userCodeParentPath 用户代码父目录的绝对路径
-     * @param userCodePath       用户代码文件的绝对路径
-     * @return {@link CodeSandBoxCmd}
-     */
-    protected abstract CodeSandBoxCmd getCmd(String userCodeParentPath,
-                                             String userCodePath);
-
-
-    @Override
-    public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
-        File userCodeFile = null;
-        ExecuteCodeResponse executeCodeResponse = null;
-        try {
-            List<String> inputList = executeCodeRequest.getInputList();
-            String code = executeCodeRequest.getCode();
-            // 1. 把用户的代码保存为文件
-            userCodeFile = saveCodeToFile(code);
-
-            String userCodePath = userCodeFile.getAbsolutePath();
-            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
-
-            CodeSandBoxCmd sandBoxCmd = getCmd(userCodeParentPath, userCodePath);
-            String compileCmd = sandBoxCmd.getCompileCmd();
-            String runCmd = sandBoxCmd.getRunCmd();
-            // 2. 编译代码
-            ExecuteMessage compileCodeFileExecuteMessage = compileCode(compileCmd);
-            System.out.println(compileCodeFileExecuteMessage);
-
-            // 3. 执行代码，得到输出结果
-            List<ExecuteMessage> executeMessageList = runCode(inputList, runCmd);
-            // 4. 收集整理输出结果
-            executeCodeResponse = getOutputResponse(executeMessageList);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        } finally {
-            // 5. 文件清理，释放空间
-            boolean b = deleteFile(userCodeFile);
-            if (!b) {
-                log.error("deleteFile error userCodeFilePath={}", userCodeFile.getAbsolutePath());
-            }
-        }
-        return executeCodeResponse;
-    }
-
-
-    /**
-     * 1. 保存用户代码到文件中
-     * 保存到文件中的格式应为: tempCode/language/UUID/代码文件
-     *
-     * @param code 代码
-     * @return
-     */
-    private File saveCodeToFile(String code) {
-        // 所有用户代码的根目录
-        String userDir = System.getProperty("user.dir");
-        String globalCodePath = userDir + File.separator + globalCodeDirPath;
-        if (!FileUtil.exist(globalCodePath)) {
-            FileUtil.mkdir(globalCodePath);
-        }
-        // 存放用户代码的具体目录，通过prefix区分不同语言
-        String userCodeParentPath = globalCodePath+ File.separator + prefix + File.separator + UUID.randomUUID();
-        // 用户代码文件
-        String userCodePath = userCodeParentPath + File.separator + globalCodeFileName;
-        return FileUtil.writeString(code, userCodePath,
-                StandardCharsets.UTF_8);
-    }
-
-
-    /**
-     * 2. 编译代码
-     *
-     * @param compileCmd
-     * @return
-     */
-    private ExecuteMessage compileCode(String compileCmd) {
-        try {
-            Process compileProcess = Runtime.getRuntime().exec(compileCmd);
-            ExecuteMessage executeMessage = ProcessUtil.runProcessAndGetMessage(compileProcess, "编译");
-            if (executeMessage.getExitValue() != 0) {
-                throw new RuntimeException("编译错误");
-            }
-            return executeMessage;
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-    }
-
-
-    /**
-     * 3. 执行字节码文件，获得执行结果列表
-     *
-     * @param inputList 输入用例
-     * @param runCmd    运行的cmd
-     * @return List<ExecuteMessage>
-     */
-    private List<ExecuteMessage> runCode(List<String> inputList, String runCmd) {
-        List<ExecuteMessage> executeMessageList = new LinkedList<>();
-        for (String input : inputList) {
-            Process runProcess;
-            try {
-                runProcess = Runtime.getRuntime().exec(runCmd);
-                new Thread(() -> {
-                    try {
-                        Thread.sleep(TIMEOUT);
-                        log.info("超时了，中断");
-                        runProcess.destroy();
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).start();
-                ExecuteMessage executeMessage = ProcessUtil.handleProcessInteraction(runProcess, input, "运行");
-                log.info("{}", executeMessage);
-                executeMessageList.add(executeMessage);
-            } catch (IOException e) {
-                throw new RuntimeException("程序执行异常，" + e);
-            }
-        }
-        return executeMessageList;
-    }
-
-
-    /**
-     * 4. 获取输出结果
-     *
-     * @param executeMessageList
-     * @return
-     */
-    public ExecuteCodeResponse getOutputResponse(List<ExecuteMessage> executeMessageList) {
-        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
-        List<String> outputList = new ArrayList<>();
-        // 一组输入用例中某个用例执行时长的最大值，便于判断是否超时
-        long maxTime = 0;
-        for (ExecuteMessage executeMessage : executeMessageList) {
-            String errorMessage = executeMessage.getErrorMessage();
-            if (StrUtil.isNotBlank(errorMessage)) {
-                executeCodeResponse.setMessage(errorMessage);
-                // 执行中存在错误
-                executeCodeResponse.setStatus(3);
-                break;
-            }
-            outputList.add((executeMessage.getMessage()));
-            Long time = executeMessage.getTime();
-            if (time != null) {
-                maxTime = Math.max(maxTime, time);
-            }
-        }
-        executeCodeResponse.setOutputList(outputList);
-        // 表示正常运行完成
-        if (outputList.size() == executeMessageList.size()) {
-            executeCodeResponse.setStatus(2);
-        }
-        QuestionSubmitJudgeInfo questionSubmitJudgeInfo = new QuestionSubmitJudgeInfo();
-        questionSubmitJudgeInfo.setTime(maxTime);
-        executeCodeResponse.setJudgeInfo(questionSubmitJudgeInfo);
-        return executeCodeResponse;
-    }
-
-    /**
-     * 5. 删除文件
-     *
-     * @param userCodeFile
-     * @return
-     */
-    public boolean deleteFile(File userCodeFile) {
-        if (userCodeFile.getParentFile() != null) {
-            String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
-            boolean del = FileUtil.del(userCodeParentPath);
-            System.out.println("删除" + (del ? "成功" : "失败"));
-            return del;
-        }
-        return true;
-    }
-
-
-    /**
-     * 6. 错误处理，提升程序健壮性
-     */
-    private ExecuteCodeResponse getErrorResponse(Throwable e) {
-        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
-        executeCodeResponse.setOutputList(new ArrayList<>());
-        executeCodeResponse.setMessage(e.getMessage());
-        executeCodeResponse.setStatus(3);
-        executeCodeResponse.setJudgeInfo(new QuestionSubmitJudgeInfo());
-        return executeCodeResponse;
-    }
-}
-```
-
-#### 优化ProcessUtil 
-
-**提供handleProcessInteraction模拟控制台输入数据**
-
-```java
-/**
- * 、
- * 进程工具类
- */
-@Slf4j
-public class ProcessUtil {
-    /**
-     * 执行进程，并记录信息
-     *
-     * @param process
-     * @param opName
-     * @return
-     */
-    public static ExecuteMessage runProcessAndGetMessage(Process process, String opName) {
-        ExecuteMessage executeMessage = new ExecuteMessage();
-        try {
-            StopWatch watch = new StopWatch();
-            watch.start();
-            int exitValue = process.waitFor();
-            executeMessage.setExitValue(exitValue);
-            if (exitValue == 0) {
-                log.info(opName + "成功");
-
-            } else {
-                // 异常退出
-                log.error(opName + "失败，错误码为: {}", exitValue);
-                BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
-                String errorOutputLine = "";
-                List<String> errorOutputStrList = new ArrayList<>();
-                while ((errorOutputLine = errorBufferedReader.readLine()) != null) {
-                    errorOutputStrList.add(errorOutputLine);
-                }
-                log.error("错误输出为：{}", errorOutputStrList);
-                // 设置错误信息
-                executeMessage.setErrorMessage(StringUtils.join(errorOutputStrList, "\n"));
-            }
-
-            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String outputLine = "";
-            List<String> outputStrList = new ArrayList<>();
-            while ((outputLine = bufferedReader.readLine()) != null) {
-                outputStrList.add(outputLine);
-            }
-            if (CollectionUtil.isNotEmpty(outputStrList)) {
-                log.info("正常输出：{}", outputStrList);
-                // 设置正常信息
-                executeMessage.setMessage(StringUtils.join(outputStrList, "\n"));
-            }
-            watch.stop();
-            executeMessage.setTime(watch.getLastTaskTimeMillis());
-        } catch (Exception e) {
-            throw new RuntimeException(opName + "错误：" + e);
-        }
-
-        return executeMessage;
-    }
-
-    /**
-     * 执行交互式进程，并记录信息
-     *
-     * @param runProcess
-     * @param input
-     * @param opName
-     * @return
-     */
-    public static ExecuteMessage handleProcessInteraction(Process runProcess, String input, String opName) {
-        OutputStream outputStream = runProcess.getOutputStream();
-        try {
-            // 模拟控制台输入数据
-            outputStream.write((input + "\n").getBytes());
-            outputStream.flush();
-            outputStream.close();
-            return runProcessAndGetMessage(runProcess, opName);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } finally {java
-            try {
-                outputStream.close();
-            } catch (IOException e) {
-                log.error("关闭输入流失败");
-            }
-        }
-    }
-}
-```
-
-#### 解决异常信息未封装的问题
-
-##### 修改代码沙箱模板
 
 ```java
 import org.apache.commons.lang3.ObjectUtils;
@@ -10004,7 +9746,111 @@ public abstract class CodeSandBoxTemplate implements CodeSandBox {
 }
 ```
 
-##### 修改判题策略
+#### 优化ProcessUtil 
+
+**提供handleProcessInteraction模拟控制台输入数据**
+
+```java
+import cn.hutool.core.collection.CollectionUtil;
+import cn.hutool.core.util.StrUtil;
+import com.luoying.model.ExecuteMessage;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.util.StopWatch;
+
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 进程工具类
+ */
+@Slf4j
+public class ProcessUtil {
+    /**
+     * 执行进程，并记录信息
+     *
+     * @param process
+     * @param opName
+     * @return
+     */
+    public static ExecuteMessage runProcessAndGetMessage(Process process, String opName) {
+        ExecuteMessage executeMessage = new ExecuteMessage();
+        try {
+            StopWatch watch = new StopWatch();
+            watch.start();
+            int exitValue = process.waitFor();
+            executeMessage.setExitValue(exitValue);
+            if (exitValue == 0) {
+                log.info(opName + "成功");
+
+            } else {
+                // 异常退出
+                log.error(opName + "失败，错误码为: {}", exitValue);
+                /*// Linux
+                BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));*/
+                // Windows
+                BufferedReader errorBufferedReader = new BufferedReader(new InputStreamReader(process.getErrorStream(), "GBK"));
+                String errorOutputLine = "";
+                List<String> errorOutputStrList = new ArrayList<>();
+                while ((errorOutputLine = errorBufferedReader.readLine()) != null) {
+                    errorOutputStrList.add(errorOutputLine);
+                }
+                log.error("错误输出为：{}", errorOutputStrList);
+                // 设置错误信息
+                executeMessage.setErrorMessage(StringUtils.join(errorOutputStrList, "\n"));
+            }
+
+            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String outputLine = "";
+            List<String> outputStrList = new ArrayList<>();
+            while ((outputLine = bufferedReader.readLine()) != null) {
+                outputStrList.add(outputLine);
+            }
+            if (CollectionUtil.isNotEmpty(outputStrList)) {
+                log.info("正常输出：{}", outputStrList);
+                // 设置正常信息
+                executeMessage.setMessage(StringUtils.join(outputStrList, "\n"));
+            }
+            watch.stop();
+            executeMessage.setTime(watch.getLastTaskTimeMillis());
+        } catch (Exception e) {
+            throw new RuntimeException(opName + "错误：" + e);
+        }
+
+        return executeMessage;
+    }
+
+    /**
+     * 执行交互式进程，并记录信息
+     *
+     * @param runProcess
+     * @param input
+     * @param opName
+     * @return
+     */
+    public static ExecuteMessage handleProcessInteraction(Process runProcess, String input, String opName) {
+        OutputStream outputStream = runProcess.getOutputStream();
+        try {
+            // 模拟控制台输入数据
+            outputStream.write((input + "\n").getBytes());
+            outputStream.flush();
+            outputStream.close();
+            return runProcessAndGetMessage(runProcess, opName);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                outputStream.close();
+            } catch (IOException e) {
+                log.error("关闭输入流失败");
+            }
+        }
+    }
+}
+```
+
+#### 修改判题策略
 
 ```java
 import cn.hutool.json.JSONUtil;
@@ -11154,6 +11000,8 @@ public BaseResponse<Page<QuestionSubmitVO>> listMyQuestionSubmitByPage(@RequestB
 
 ##### 修改题目查询
 
+使得每道题目都能有解答状态
+
 ```java
 @Resource
 private AcceptedQuestionMapper acceptedQuestionMapper;
@@ -11671,8 +11519,6 @@ public void receiveMessage(String message, Channel channel, @Header(AmqpHeaders.
     channel.basicAck(deliveryTag, false);
 }
 ```
-
-
 
 #### 前端
 
@@ -12495,6 +12341,14 @@ public static runQuestionOnlineUsingPost(
 }
 ```
 
+![image-20231225110615932](assets/image-20231225110615932.png)
+
+![image-20231225110624531](assets/image-20231225110624531.png)
+
+![image-20231225110635213](assets/image-20231225110635213.png)
+
+![image-20231225110648065](assets/image-20231225110648065.png)
+
 
 
 ## 扩展思路
@@ -12509,6 +12363,8 @@ public static runQuestionOnlineUsingPost(
 - 如果确定代码沙箱示例不会出现线程安全问题、可复用，那么可以使用单例工厂模式
 - 处理消息重试，避免消息积压
 - 压力测试，验证
+
+
 
 ## 踩坑
 

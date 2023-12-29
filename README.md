@@ -4882,7 +4882,58 @@ Spring Cloud 有相当多的依赖，参差不齐，不建议随意找一套配�
 
 ![image-20231117165855809](assets/image-20231117165855809.png)
 
-2. 子模块引入 parent 语法，可以通过继承父模块配置，统一项目的定义和版本号。
+2. 修改父pom.xml文件
+
+把spring-boot-maven-plugin中的configuration标签和executions标签删除
+
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.8.1</version>
+            <configuration>
+                <source>1.8</source>
+                <target>1.8</target>
+                <encoding>UTF-8</encoding>
+            </configuration>
+        </plugin>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+            <version>${spring-boot.version}</version>
+        </plugin>
+    </plugins>
+</build>
+```
+
+3. 修改所有springboot子模块的pom.xml文件
+
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+            <executions>
+                <execution>
+                    <id>repackage</id>
+                    <goals>
+                        <goal>repackage</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
+```
+
+这两步是为了让父模块能统一打包子模块
+
+
+
+4. 子模块引入 parent 语法，可以通过继承父模块配置，统一项目的定义和版本号。
 
 ![image-20231117170200183](assets/image-20231117170200183.png)
 
@@ -6855,15 +6906,15 @@ app.use(ArcoVueIcon)
 ```vue
 <a-dropdown trigger="hover">
   <!--头像-->
-  <a-avatar shape="circle">
+  <a-avatar shape="circle" class="userAvatar">
     <template
       v-if="loginUser && loginUser.userRole != AccessEnum.NOT_LOGIN"
     >
       <template v-if="loginUser.userAvatar">
         <img
           alt="avatar"
-          class="userAvatar"
           :src="loginUser.userAvatar"
+          style="border-radius: 50%"
         />
       </template>
       <!--默认头像-->
@@ -6888,7 +6939,7 @@ app.use(ArcoVueIcon)
           <icon-user />
         </template>
         <template #default>
-          <a-anchor-link>个人信息</a-anchor-link>
+          <a-anchor-link href="/_userInfo">个人信息</a-anchor-link>
         </template>
       </a-doption>
       <a-doption>
@@ -6944,8 +6995,8 @@ const logout = async () => {
 
 ```vue
 .userAvatar {
-  height: 160px;
-  width: 160px;
+  height: 40px;
+  width: 40px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -6966,11 +7017,37 @@ const logout = async () => {
 
 
 
-### 优化注册页面
+### 优化登录页面
 
-1、添加校验规则
+**1、删除使用h2标签的用户登录标题**
+
+**2、优化样式**
 
 ```vue
+<a-form-item>
+  <a-button
+    type="primary"
+    html-type="submit"
+    long
+    style="background-color: rgb(24, 25, 28); border-radius: 6px"
+    >登录
+  </a-button>
+</a-form-item>
+<a-form-item>
+  没有账号？
+  <a-link href="/user/register"> 注册</a-link>
+</a-form-item>
+```
+
+![image-20231229210448891](assets/image-20231229210448891.png)
+
+
+
+### 优化注册页面
+
+**1、添加校验规则**
+
+```ts
 :rules="[
   { required: true, message: '账号不能为空' },
   { minLength: 4, message: '账号长度不能低于四位' },
@@ -6983,7 +7060,7 @@ const logout = async () => {
 ]"
 ```
 
-2、前端判断两次密码是否一致
+**2、前端判断两次密码是否一致**
 
 ```ts
 if (form.userAccount.length < 4 || form.userPassword.length < 6) {
@@ -6998,7 +7075,27 @@ if (
 }
 ```
 
-![image-20231225111920236](assets/image-20231225111920236.png)
+**3、优化样式**
+
+```vue
+<a-form-item>
+  <a-button
+    long
+    type="primary"
+    html-type="submit"
+    style="background-color: rgb(24, 25, 28); border-radius: 6px"
+    >注册
+  </a-button>
+</a-form-item>
+<a-form-item>
+  已经注册？
+  <a-link href="/user/login">登录</a-link>
+</a-form-item>
+```
+
+**4、删除使用h2标签的用户注册标题**
+
+![image-20231229210208556](assets/image-20231229210208556.png)
 
 
 
@@ -8951,12 +9048,28 @@ const columns = [
 ```
 
 ```java
+import org.redisson.Redisson;
+import org.redisson.api.RRateLimiter;
+import org.redisson.api.RateIntervalUnit;
+import org.redisson.api.RateType;
+import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
 @Configuration
 public class RedissonClientConfig {
+    @Value("${spring.redis.host}")
+    private String host;
+
+    @Value("${spring.redis.password}")
+    private String password;
+
     @Bean
     public RRateLimiter rateLimiter() {
         Config config = new Config();
-        config.useSingleServer().setAddress("redis://127.0.0.1:6379").setDatabase(1).setPassword("123");
+        config.useSingleServer().setAddress("redis://"+host+":6379").setDatabase(1).setPassword(password);
         RedissonClient redissonClient = Redisson.create(config);
 
         String key = "myRateLimiter";
@@ -10253,10 +10366,14 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
 import java.util.HashMap;
 import java.util.Map;
 @Slf4j
+@Component
 public class InitRabbitMq {
     private static final String EXCHANGE_NAME = "oj_exchange";
     private static final String QUEUE_NAME = "oj_queue";
@@ -10265,10 +10382,14 @@ public class InitRabbitMq {
     private static final String DLX_QUEUE_NAME = "oj_dlx_queue";
     private static final String DLX_ROUTING_KEY = "oj_dlx_routingKey";
 
-    public static void doInit() {
+    @Value("${spring.rabbitmq.host}")
+    private String host;
+
+    @PostConstruct
+    public void doInit() {
         try {
             ConnectionFactory connectionFactory = new ConnectionFactory();
-            connectionFactory.setHost("localhost");
+            connectionFactory.setHost(host);
             Connection connection = connectionFactory.newConnection();
             Channel channel = connection.createChannel();
             // 指定死信参数
@@ -10297,10 +10418,32 @@ public class InitRabbitMq {
             log.error("消息队列启动失败");
         }
     }
+}
+```
+
+此时项目启动，会创建InitRabbitMq的对象放进容器，在创建前就会执行doInit方法，所以主类中的调用可以删除了
+
+```java
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@SpringBootApplication
+@EnableScheduling
+@EnableAspectJAutoProxy(proxyTargetClass = true, exposeProxy = true)
+@ComponentScan("com.luoying")
+@EnableDiscoveryClient
+@EnableFeignClients(basePackages = {"com.luoying.luoojbackendserviceclient.service"})
+public class LuoojBackendJudgeServiceApplication {
 
     public static void main(String[] args) {
-        doInit();
+        SpringApplication.run(LuoojBackendJudgeServiceApplication.class, args);
     }
+
 }
 ```
 
@@ -11633,6 +11776,92 @@ public class RunCodeResponse {
 }
 ```
 
+##### 准备Mapper
+
+```java
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.luoying.luoojbackendmodel.entity.Question;
+import org.apache.ibatis.annotations.Param;
+
+
+/**
+ * @author 落樱的悔恨
+ * @description 针对表【question(题目)】的数据库操作Mapper
+ * @createDate 2023-11-09 16:32:34
+ * @Entity com.luoying.model.entity.Question
+ */
+public interface QuestionMapper extends BaseMapper<Question> {
+    /**
+     * 查询上一道题目
+     * @param tableName
+     * @param questionId
+     * @return
+     */
+    long getPrevQuestion(@Param("tableName") String tableName, @Param("questionId") long questionId);
+
+    /**
+     * 查询下一道题目
+     * @param tableName
+     * @param questionId
+     * @return
+     */
+    long getNextQuestion(@Param("tableName") String tableName, @Param("questionId") long questionId);
+
+}
+```
+
+##### 编写XML
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.luoying.luoojbackendquestionservice.mapper.QuestionMapper">
+
+    <resultMap id="BaseResultMap" type="com.luoying.luoojbackendmodel.entity.Question">
+        <id property="id" column="id" jdbcType="BIGINT"/>
+        <result property="title" column="title" jdbcType="VARCHAR"/>
+        <result property="content" column="content" jdbcType="VARCHAR"/>
+        <result property="tags" column="tags" jdbcType="VARCHAR"/>
+        <result property="answer" column="answer" jdbcType="VARCHAR"/>
+        <result property="submitNum" column="submitNum" jdbcType="INTEGER"/>
+        <result property="acceptedNum" column="acceptedNum" jdbcType="INTEGER"/>
+        <result property="judgeConfig" column="judgeConfig" jdbcType="VARCHAR"/>
+        <result property="judgeCase" column="judgeCase" jdbcType="VARCHAR"/>
+        <result property="thumbNum" column="thumbNum" jdbcType="INTEGER"/>
+        <result property="favourNum" column="favourNum" jdbcType="INTEGER"/>
+        <result property="userId" column="userId" jdbcType="BIGINT"/>
+        <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
+        <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
+        <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
+    </resultMap>
+    <!--查询上一道题目-->
+    <select id="getPrevQuestion" resultType="long">
+        select id
+        from question
+        order by id >= #{questionId}, id desc limit 1
+    </select>
+    <!--查询下一道题目-->
+    <select id="getNextQuestion" resultType="long">
+        select id
+        from ${tableName}
+        order by id &lt;= #{questionId}, id asc limit 1
+    </select>
+
+    <sql id="Base_Column_List">
+        id
+        ,title,content,
+        tags,answer,submitNum,
+        acceptedNum,judgeConfig,judgeCase,
+        thumbNum,favourNum,userId,
+        createTime,updateTime,isDelete
+    </sql>
+
+
+</mapper>
+```
+
 ##### 判题服务提供接口
 
 ```java
@@ -11709,7 +11938,7 @@ public class JudgeInnerController implements JudgeFeignClient {
 ```java
 @Resource
 private JudgeFeignClient judgeFeignClient;
-@PostMapping("/question/run/online")
+@PostMapping("/run/online")
 public BaseResponse<RunCodeResponse> questionRunOnline(@RequestBody RunCodeRequest runCodeRequest) {
     List<String> inputList = Arrays.asList(runCodeRequest.getInput());
     ExecuteCodeRequest executeCodeRequest =
@@ -11728,13 +11957,67 @@ public BaseResponse<RunCodeResponse> questionRunOnline(@RequestBody RunCodeReque
             .build();
     return ResultUtils.success(runCodeResponse);
 }
+
+@GetMapping("/get/questionId/previous")
+public BaseResponse<Long> getPrevQuestion(@RequestParam("questionId") long questionId) {
+    String tableName = "question";
+    return ResultUtils.success(questionMapper.getPrevQuestion(tableName, questionId));
+}
+
+@GetMapping("/get/questionId/next")
+public BaseResponse<Long> getNextQuestion(@RequestParam("questionId") long questionId) {
+    String tableName = "question";
+    return ResultUtils.success(questionMapper.getNextQuestion(tableName, questionId));
+}
+
+@GetMapping("/get/questionId/random")
+public BaseResponse<Long> getRandomQuestion() {
+    List<Question> questionList = questionMapper.selectList(null);
+    Random random = new Random();
+    int index = random.nextInt(questionList.size());
+    Question question = questionList.get(index);
+    return ResultUtils.success(question.getId());
+}
 ```
 
 
 
 #### 前端
 
-**1、安装vue-codemirror 及插件** https://github.com/surmon-china/vue-codemirror
+##### 解决 ResizeObserver loop 
+
+`vue.config.js`
+
+```js
+const { defineConfig } = require("@vue/cli-service");
+const MonacoWebpackPlugin = require("monaco-editor-webpack-plugin");
+module.exports = defineConfig({
+  devServer: {
+    client: {
+      overlay: {
+        runtimeErrors: (error) => {
+          const ignoreErrors = [
+            "ResizeObserver loop limit exceeded",
+            "ResizeObserver loop completed with undelivered notifications.",
+          ];
+          if (ignoreErrors.includes(error.message)) {
+            return false;
+          }
+          return false;
+        },
+      },
+    },
+  },
+  transpileDependencies: true,
+  lintOnSave: false,
+  ...
+});
+
+```
+
+##### 安装vue-codemirror 及插件
+
+https://github.com/surmon-china/vue-codemirror
 
 ```sh
 yarn add codemirror vue-codemirror
@@ -11749,207 +12032,529 @@ yarn add @codemirror/lang-java
 yarn add @codemirror/theme-one-dark
 ```
 
-**2、修改页面**
+##### 准备QuestionLayout
+
+```vue
+<template>
+  <div id="questionlayout">
+    <a-layout style="min-height: 100vh">
+      <a-layout-header class="header">
+        <a-row class="grid-demo" align="center" :wrap="false">
+          <a-col flex="auto">
+            <a-space>
+              <a-link :hoverable="false" href="/">
+                <img class="logo" src="../assets/oj-logo.png" />
+              </a-link>
+              <a-button style="color: black" type="text" href="/questions"
+                >题库
+              </a-button>
+              <a-tooltip content="上一题">
+                <a-button
+                  size="mini"
+                  type="text"
+                  @click="getPrevQuestion"
+                  style="
+                    width: 22.4px;
+                    height: 22.4px;
+                    color: gray;
+                    border: solid 1px #f2f2f2;
+                  "
+                >
+                  <template #icon>
+                    <icon-left />
+                  </template>
+                </a-button>
+              </a-tooltip>
+              <a-tooltip content="下一题">
+                <a-button
+                  size="mini"
+                  type="text"
+                  @click="getNextQuestion"
+                  style="
+                    width: 22.4px;
+                    height: 22.4px;
+                    color: gray;
+                    border: solid 1px #f2f2f2;
+                  "
+                >
+                  <template #icon>
+                    <icon-right />
+                  </template>
+                </a-button>
+              </a-tooltip>
+              <a-tooltip content="随机一题">
+                <a-button
+                  @click="getRandomQuestion"
+                  type="text"
+                  style="width: 24px; height: 24px"
+                >
+                  <template #icon>
+                    <svg
+                      t="1703841836926"
+                      class="icon"
+                      viewBox="0 0 1024 1024"
+                      version="1.1"
+                      xmlns="http://www.w3.org/2000/svg"
+                      p-id="1480"
+                      width="20"
+                      height="20"
+                    >
+                      <path
+                        d="M500.6 599.8c19.7 24.5 41.5 47.7 67.1 67.9 56.4 44.5 122.9 67.1 203.1 69.1L744 763.5c-14.1 14.1-14.1 36.9 0 50.9 7 7 16.2 10.5 25.5 10.5s18.4-3.5 25.5-10.5l84-84c7.4-7.4 10.9-17.2 10.5-26.9 2.9-11.8-0.3-24.8-9.5-34l-84-84c-14.1-14.1-36.9-14.1-50.9 0s-14.1 36.9 0 50.9l28.4 28.4c-117.4-2.6-177.1-56.5-230-127.1-7.2 10.2-14.4 20.8-21.9 31.6-6.9 10.2-13.9 20.3-21 30.5zM382.8 339.6C323.4 292.8 252.6 270 166.5 270c-19.9 0-36 16.1-36 36s16.1 36 36 36c145.4 0 205.2 75 267.8 165.5 14.2-20.7 28.7-41.8 44.3-62.2-27.2-38.1-57.2-75.3-95.8-105.7z"
+                        p-id="1481"
+                        fill="#bfbfbf"
+                      ></path>
+                      <path
+                        d="M891.5 338.4c0.4-9.7-3.1-19.5-10.5-26.9l-84-84c-14.1-14.1-36.9-14.1-50.9 0-14.1 14.1-14.1 36.9 0 50.9l26.7 26.7c-80.2 2-146.7 24.7-203.1 69.1-51.1 40.3-87.1 92.7-121.8 143.4C380.7 615.5 322.8 700 168.5 700c-19.9 0-36 16.1-36 36s16.1 36 36 36c86.1 0 156.9-22.8 216.3-69.6 51.4-40.5 87.5-93.1 122.4-144 65.5-95.4 122.2-178.1 268.2-181.3L747 405.5c-14.1 14.1-14.1 36.9 0 50.9 7 7 16.2 10.5 25.5 10.5s18.4-3.5 25.5-10.5l84-84c9.2-9.2 12.4-22.2 9.5-34z"
+                        p-id="1482"
+                        fill="#bfbfbf"
+                      ></path>
+                    </svg>
+                  </template>
+                </a-button>
+              </a-tooltip>
+            </a-space>
+          </a-col>
+          <a-col flex="100px">
+            <a-dropdown trigger="hover">
+              <!--头像-->
+              <a-avatar shape="circle" class="userAvatar">
+                <template
+                  v-if="loginUser && loginUser.userRole != AccessEnum.NOT_LOGIN"
+                >
+                  <template v-if="loginUser.userAvatar">
+                    <img alt="avatar" :src="loginUser.userAvatar" />
+                  </template>
+                  <!--默认头像-->
+                  <template v-else>
+                    <a-avatar>
+                      <IconUser />
+                    </a-avatar>
+                  </template>
+                </template>
+                <template v-else>
+                  <a-avatar>未登录</a-avatar>
+                </template>
+              </a-avatar>
+              <!--下拉框-->
+              <template #content>
+                <!--登录后-->
+                <template
+                  v-if="loginUser && loginUser.userRole != AccessEnum.NOT_LOGIN"
+                >
+                  <a-doption>
+                    <template #icon>
+                      <icon-user />
+                    </template>
+                    <template #default>
+                      <a-anchor-link href="/_userInfo">个人信息</a-anchor-link>
+                    </template>
+                  </a-doption>
+                  <a-doption>
+                    <template #icon>
+                      <icon-poweroff />
+                    </template>
+                    <template #default>
+                      <a-anchor-link @click="logout">退出登录</a-anchor-link>
+                    </template>
+                  </a-doption>
+                </template>
+                <!--登录前-->
+                <template v-else>
+                  <a-doption>
+                    <template #icon>
+                      <icon-import />
+                    </template>
+                    <template #default>
+                      <a-anchor-link href="/user/login">登录</a-anchor-link>
+                    </template>
+                  </a-doption>
+                  <a-doption>
+                    <template #icon>
+                      <icon-user />
+                    </template>
+                    <template #default>
+                      <a-anchor-link href="/user/register">注册</a-anchor-link>
+                    </template>
+                  </a-doption>
+                </template>
+              </template>
+            </a-dropdown>
+          </a-col>
+        </a-row>
+      </a-layout-header>
+      <a-layout-content class="content">
+        <router-view />
+      </a-layout-content>
+    </a-layout>
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  LoginUserVO,
+  QuestionControllerService,
+  UserControllerService,
+} from "../../generated";
+import message from "@arco-design/web-vue/es/message";
+import { useStore } from "vuex";
+import { ref, watch, watchEffect } from "vue";
+import AccessEnum from "@/access/AccessEnum";
+import { useRoute, useRouter } from "vue-router";
+
+const store = useStore();
+const router = useRouter();
+const route = useRoute();
+
+const loginUser = ref<LoginUserVO>();
+watchEffect(() => {
+  loginUser.value = store.state.user?.loginUser;
+});
+
+const logout = async () => {
+  const res = await UserControllerService.userLogoutUsingPost();
+  if (res.code === 0) {
+    location.reload();
+    message.success("退出成功");
+  } else {
+    message.error("退出失败，", res.message);
+  }
+};
+
+const questionId = ref();
+watch(
+  () => route.params,
+  () => {
+    questionId.value = route.params.id;
+  }
+);
+
+const getPrevQuestion = async () => {
+  console.log(route.params);
+  const res = await QuestionControllerService.getPreviousQuestionUsingGet(
+    route.params.id as any
+  );
+  console.log(questionId.value);
+  console.log(res);
+  if (res.code === 0) {
+    router.push({
+      path: `/view/question/${res.data}`,
+    });
+  }
+};
+
+const getNextQuestion = async () => {
+  const res = await QuestionControllerService.getNextQuestionUsingGet(
+    route.params.id as any
+  );
+  if (res.code === 0) {
+    router.push({
+      path: `/view/question/${res.data}`,
+    });
+  }
+};
+
+const getRandomQuestion = async () => {
+  const res = await QuestionControllerService.getRandomQuestion();
+  console.log(res);
+  if (res.code === 0) {
+    router.push({
+      path: `/view/question/${res.data}`,
+    });
+  }
+};
+
+router.afterEach((to, from, failure) => {
+  location.reload();
+});
+</script>
+
+<style>
+#questionlayout {
+  background: rgb(229, 230, 235);
+}
+
+#questionlayout .header {
+  background: white;
+  border-bottom: 1px solid #cdcdcd;
+}
+
+#questionlayout .logo {
+  height: 32px;
+  border-radius: 50%;
+  margin-left: 16px;
+}
+
+#questionlayout .content {
+  padding: 6px;
+}
+
+#questionlayout .userAvatar {
+  height: 32px;
+  width: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+</style>
+```
+
+##### 修改路由
+
+```ts
+{
+  path: "/view",
+  name: "题目",
+  component: QuestionLayout,
+  children: [
+    {
+      path: "/view/question/:id",
+      name: "在线做题",
+      component: ViewQuestionView,
+      props: true,
+    },
+  ],
+  meta: {
+    access: AccessEnum.USER,
+    hideInMenu: true,
+  },
+},
+```
+
+##### 修改App.vue
+
+```vue
+<template>
+  <div id="app">
+    <template v-if="route.path.startsWith('/user')">
+      <router-view />
+    </template>
+    <template v-else-if="route.path.startsWith('/view/question')">
+      <router-view />
+    </template>
+    <template v-else>
+      <BasicLayout />
+    </template>
+  </div>
+</template>
+...
+```
+
+##### 修改ViewQuestionView
 
 ```vue
 <template>
   <div id="viewQuestionView">
-    <a-row :gutter="[24, 24]">
+    <a-resize-box :directions="['right']" v-model:width="resizeBoxWidth">
       <!--左栏-->
-      <a-col :md="12" xs="24">
-        <a-tabs default-active-key="question">
-          <!--题目详情-->
-          <a-tab-pane key="question" title="题目详情">
-            <a-scrollbar style="height: 580px; overflow: auto">
-              <a-card v-if="question" :title="question.title">
-                <a-space direction="vertical" size="large" fill>
-                  <a-descriptions
-                    title="判题条件"
-                    :column="{ xs: 1, md: 2, lg: 3 }"
-                  >
-                    <a-descriptions-item label="时间限制">
-                      {{ question.judgeConfig.timeLimit }}
-                    </a-descriptions-item>
-                    <a-descriptions-item label="内存限制">
-                      {{ question.judgeConfig.timeLimit }}
-                    </a-descriptions-item>
-                    <a-descriptions-item label="堆栈限制">
-                      {{ question.judgeConfig.timeLimit }}
-                    </a-descriptions-item>
-                  </a-descriptions>
-                </a-space>
-
-                <MDViewer :value="question.content || ''" />
-
-                <template #extra>
-                  <a-space wrap>
-                    <a-tag
-                      v-for="(tag, index) of question.tags"
-                      :key="index"
-                      color="green"
-                      >{{ tag }}
-                    </a-tag>
+      <div id="leftPart">
+        <a-card style="height: 695px">
+          <a-scrollbar style="height: calc(100vh - 110px); overflow: auto">
+            <a-tabs default-active-key="question" size="mini">
+              <!--题目详情-->
+              <a-tab-pane key="question" title="题目详情">
+                <a-card v-if="question" :title="question.title">
+                  <a-space direction="vertical" size="large" fill>
+                    <a-descriptions
+                      title="判题条件"
+                      :column="{ xs: 1, md: 2, lg: 3 }"
+                    >
+                      <a-descriptions-item label="时间限制">
+                        {{ question.judgeConfig.timeLimit }}
+                      </a-descriptions-item>
+                      <a-descriptions-item label="内存限制">
+                        {{ question.judgeConfig.timeLimit }}
+                      </a-descriptions-item>
+                      <a-descriptions-item label="堆栈限制">
+                        {{ question.judgeConfig.timeLimit }}
+                      </a-descriptions-item>
+                    </a-descriptions>
                   </a-space>
-                </template>
-              </a-card>
-            </a-scrollbar>
-          </a-tab-pane>
-          <!--评论区-->
-          <a-tab-pane key="comment" title="评论" disabled> 评论区</a-tab-pane>
-          <!--题解-->
-          <a-tab-pane key="answers" title="题解">
-            <a-card v-if="question">
-              <MDViewer :value="question.answer || ''" />
-            </a-card>
-          </a-tab-pane>
-          <!--提交记录-->
-          <a-tab-pane key="history" title="提交记录">
-            <a-table
-              :columns="columns"
-              :data="dataList"
-              :pagination="{
-                showTotal: true,
-                current: searchParams.current,
-                pageSize: searchParams.pageSize,
-                total,
-                showPageSize: true,
-              }"
-              @page-change="onPageChange"
-              @pageSizeChange="onPageSizeChange"
-              @row-click="handleHistoryRecordClick"
-            >
-              <template #message="{ record }">
-                <a-tag
-                  v-if="
-                    record.judgeInfo.message === JudgeInfoMessageEnum.ACCEPTED
-                  "
-                  color="blue"
-                  bordered
-                >
-                  {{ record.judgeInfo.message }}
-                </a-tag>
-                <a-tag
-                  v-else-if="
-                    record.judgeInfo.message === JudgeInfoMessageEnum.WAITING
-                  "
-                  color="green"
-                  bordered
-                >
-                  {{ record.judgeInfo.message }}
-                </a-tag>
-                <a-tag v-else color="red" bordered>
-                  {{ record.judgeInfo.message }}
-                </a-tag>
-              </template>
-              <template #memory="{ record }">
-                {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }}
-                K
-              </template>
+                  <MDViewer :value="question.content || ''" />
 
-              <template #time="{ record }">
-                {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }} ms
-              </template>
+                  <template #extra>
+                    <a-space wrap>
+                      <a-tag
+                        v-for="(tag, index) of question.tags"
+                        :key="index"
+                        color="green"
+                        >{{ tag }}
+                      </a-tag>
+                    </a-space>
+                  </template>
+                </a-card>
+              </a-tab-pane>
+              <!--评论区-->
+              <a-tab-pane key="comment" title="评论" disabled>
+                评论区
+              </a-tab-pane>
+              <!--题解-->
+              <a-tab-pane key="answers" title="题解">
+                <a-card v-if="question">
+                  <MDViewer :value="question.answer || ''" />
+                </a-card>
+              </a-tab-pane>
+              <!--提交记录-->
+              <a-tab-pane key="history" title="提交记录">
+                <a-table
+                  :columns="columns"
+                  :data="dataList"
+                  :pagination="{
+                    showTotal: true,
+                    current: searchParams.current,
+                    pageSize: searchParams.pageSize,
+                    total,
+                    showPageSize: true,
+                  }"
+                  @page-change="onPageChange"
+                  @pageSizeChange="onPageSizeChange"
+                  @row-click="handleHistoryRecordClick"
+                >
+                  <template #message="{ record }">
+                    <a-tag
+                      v-if="
+                        record.judgeInfo.message ===
+                        JudgeInfoMessageEnum.ACCEPTED
+                      "
+                      color="blue"
+                      bordered
+                    >
+                      {{ record.judgeInfo.message }}
+                    </a-tag>
+                    <a-tag
+                      v-else-if="
+                        record.judgeInfo.message ===
+                        JudgeInfoMessageEnum.WAITING
+                      "
+                      color="green"
+                      bordered
+                    >
+                      {{ record.judgeInfo.message }}
+                    </a-tag>
+                    <a-tag v-else color="red" bordered>
+                      {{ record.judgeInfo.message }}
+                    </a-tag>
+                  </template>
+                  <template #memory="{ record }">
+                    {{ record.judgeInfo.memory ? record.judgeInfo.memory : 0 }}
+                    K
+                  </template>
 
-              <template #createTime="{ record }">
-                {{ moment(record.createTime).format("YYYY-MM-DD HH:mm:ss") }}
-              </template>
-            </a-table>
-          </a-tab-pane>
-        </a-tabs>
-      </a-col>
-      <!--代码编辑-->
-      <a-col :md="12" xs="24" v-if="!historyVisible" style="margin-top: 38px">
-        <a-card>
-          <a-form :model="form" layout="inline">
-            <!--语言选择-->
-            <a-form-item field="language">
-              <a-space>
-                <a-select
-                  v-model="form.language"
-                  :style="{ width: '150px' }"
-                  placeholder="请选择语言"
-                >
-                  <a-option v-for="language in languages" :key="language"
-                    >{{ language }}
-                  </a-option>
-                </a-select>
-                <!--控制台按钮，用于打开控制台自测代码-->
-                <a-button @click="handleConsoleClick">控制台</a-button>
-                <!--提交按钮-->
-                <a-button
-                  type="primary"
-                  status="success"
-                  style="min-width: 80px"
-                  @click="doQuestionSubmit"
-                >
-                  提交
-                </a-button>
-              </a-space>
-            </a-form-item>
-          </a-form>
-          <!--代码编辑器-->
-          <CodeEditor
-            :value="form.code as string"
-            :language="form.language as string"
-            :hanndle-change="onCodeChange"
-          />
+                  <template #time="{ record }">
+                    {{ record.judgeInfo.time ? record.judgeInfo.time : 0 }}
+                    ms
+                  </template>
+
+                  <template #createTime="{ record }">
+                    {{
+                      moment(record.createTime).format("YYYY-MM-DD HH:mm:ss")
+                    }}
+                  </template>
+                </a-table>
+              </a-tab-pane>
+            </a-tabs>
+          </a-scrollbar>
         </a-card>
-      </a-col>
-      <!--提交记录详情-->
-      <a-col :md="12" xs="24" v-if="historyVisible" style="margin-top: 38px">
-        <a-card>
-          <!--关闭按钮-->
-          <a-button
-            type="text"
-            @click="
-              () => {
-                historyVisible = false;
-              }
-            "
-          >
-            <template #icon>
-              <icon-close />
-            </template>
-          </a-button>
-          <!--提交记录的一些信息-->
-          <a-space direction="vertical" size="large" fill>
-            <a-descriptions :column="{ xs: 1, md: 2, lg: 3 }">
-              <a-descriptions-item label="语言">
-                <a-tag color="arcoblue">
-                  {{ historyRecord.language }}
-                </a-tag>
-              </a-descriptions-item>
-              <a-descriptions-item label="执行时间">
-                {{
-                  historyRecord.judgeInfo.time
-                    ? historyRecord.judgeInfo.time
-                    : 0
-                }}
-                ms
-              </a-descriptions-item>
-              <a-descriptions-item label="消耗内存">
-                {{
-                  historyRecord.judgeInfo.memory
-                    ? historyRecord.judgeInfo.memory
-                    : 0
-                }}
-                K
-              </a-descriptions-item>
-            </a-descriptions>
-          </a-space>
-          <!--展示提交代码-->
-          <Codemirror
-            v-model="historyRecord.code"
-            :style="{ height: '500px' }"
-            :autofocus="false"
-            :indent-with-tab="true"
-            :tab-size="2"
-            :extensions="extensions"
-            disabled
-          />
-        </a-card>
-      </a-col>
-    </a-row>
+      </div>
+    </a-resize-box>
+    <!--右栏-->
+    <div
+      id="rightPart"
+      v-if="!historyVisible"
+      :style="{ width: codeWidth + 'px' }"
+    >
+      <a-card>
+        <a-form :model="form" layout="inline" size="mini">
+          <!--语言选择-->
+          <a-form-item field="language" style="min-width: 240px">
+            <a-space>
+              <a-select
+                v-model="form.language"
+                :style="{ width: '150px' }"
+                placeholder="请选择语言"
+              >
+                <a-option v-for="language in languages" :key="language"
+                  >{{ language }}
+                </a-option>
+              </a-select>
+              <!--控制台-->
+              <a-button
+                @click="handleConsoleClick"
+                style="width: 66px; height: 28px; border-radius: 5px"
+              >
+                控制台
+              </a-button>
+              <!--提交按钮-->
+              <a-button
+                type="primary"
+                status="success"
+                style="width: 66px; height: 28px; border-radius: 5px"
+                @click="doQuestionSubmit"
+              >
+                提交
+              </a-button>
+            </a-space>
+          </a-form-item>
+        </a-form>
+        <!--代码编辑器-->
+        <CodeEditor
+          :value="form.code as string"
+          :language="form.language as string"
+          :hanndle-change="onCodeChange"
+        />
+      </a-card>
+    </div>
+    <!--提交记录详情-->
+    <div id="history" v-if="historyVisible" :style="{ width: codeWidth }">
+      <a-card>
+        <!--关闭按钮-->
+        <a-button
+          type="text"
+          @click="
+            () => {
+              historyVisible = false;
+            }
+          "
+        >
+          <template #icon>
+            <icon-close />
+          </template>
+        </a-button>
+        <!--提交记录的一些信息-->
+        <a-space direction="vertical" size="large" fill>
+          <a-descriptions :column="{ xs: 1, md: 2, lg: 3 }">
+            <a-descriptions-item label="语言">
+              <a-tag color="arcoblue">
+                {{ historyRecord.language }}
+              </a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="执行时间">
+              {{
+                historyRecord.judgeInfo.time ? historyRecord.judgeInfo.time : 0
+              }}
+              ms
+            </a-descriptions-item>
+            <a-descriptions-item label="消耗内存">
+              {{
+                historyRecord.judgeInfo.memory
+                  ? historyRecord.judgeInfo.memory
+                  : 0
+              }}
+              K
+            </a-descriptions-item>
+          </a-descriptions>
+        </a-space>
+        <!--展示提交代码-->
+        <Codemirror
+          v-model="historyRecord.code"
+          :style="{ height: '599px' }"
+          :autofocus="false"
+          :indent-with-tab="true"
+          :tab-size="2"
+          :extensions="extensions"
+          disabled
+        />
+      </a-card>
+    </div>
     <!--控制台-->
     <a-drawer
       :height="500"
@@ -11962,7 +12567,7 @@ yarn add @codemirror/theme-one-dark
       @cancel="handleConsoleClose"
       esc-to-close
     >
-      <template #title> 自测运行 Esc（关闭）</template>
+      <template #title> 自测运行</template>
 
       <a-space>
         <!--自定义输入-->
@@ -12027,6 +12632,18 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   id: () => "",
 });
+
+const resizeBoxWidth = ref(755);
+const codeWidth = ref(0);
+
+watchEffect(() => {
+  codeWidth.value = window.innerWidth - resizeBoxWidth.value;
+});
+window.addEventListener("resize", () => {
+  // 窗口大小改变时,手动触发更新
+  codeWidth.value = window.innerWidth - resizeBoxWidth.value;
+});
+
 // 提交记录详情页面是否可见
 const historyVisible = ref(false);
 // 提交记录
@@ -12059,11 +12676,11 @@ const handleRunClick = async () => {
     language: form.value.language,
   });
   if (res.code === 0) {
-    runLoading.value = false;
     runCodeResponse.value.output = res.data.output
       ? res.data.output
       : res.data.message;
   }
+  runLoading.value = false;
 };
 /**
  * 关闭控制台
@@ -12236,15 +12853,30 @@ const onPageSizeChange = (size: number) => {
 <style scoped>
 #viewQuestionView {
   margin: 0 auto;
+  width: 100%;
+  display: flex;
 }
 
 #viewQuestionView .arco-space-horizontal .arco-space-item {
   margin-bottom: 0 !important;
 }
+
+#leftPart {
+  flex: 1;
+}
+
+#rightPart {
+  min-width: 385px;
+}
+
+#history {
+  min-width: 385px;
+  flex: 1;
+}
 </style>
 ```
 
-**3、提供自定义类型**
+##### 提供自定义类型
 
 ```ts
 export type RunCodeRequest = {
@@ -12266,7 +12898,7 @@ export type RunCodeResponse = {
 };
 ```
 
-**4、为QuestionVO类型添加answer字段，方便展示题解**
+##### 为QuestionVO类型添加answer字段，方便展示题解
 
 ```ts
 export type QuestionVO = {
@@ -12287,9 +12919,7 @@ export type QuestionVO = {
 };
 ```
 
-**5、QuestionControllerService提供方法**
-
-`获取个人提交记录`
+##### QuestionControllerService提供方法
 
 ```ts
 /**
@@ -12313,11 +12943,7 @@ public static listMyQuestionSubmitByPageUsingPost(
         },
     });
 }
-```
 
-`自测运行代码`
-
-```ts
 /**
  * runQuestionOnlineUsingPost
  * @param executeCodeRequest executeCodeRequest
@@ -12339,15 +12965,80 @@ public static runQuestionOnlineUsingPost(
         },ts
     });
 }
+
+/**
+ * getPreviousQuestion
+ * @param questionId questionId
+ * @returns BaseResponse_QuestionVO_ OK
+ * @throws ApiError
+ */
+public static getPreviousQuestionUsingGet(
+  questionId?: number,
+): CancelablePromise<BaseResponse_long_> {
+    return __request(OpenAPI, {
+        method: 'GET',
+        url: '/api/question/get/questionId/previous',
+        query: {
+            'questionId': questionId,
+        },
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },
+    });
+}
+
+/**
+ * getNextQuestion
+ * @param questionId questionId
+ * @returns BaseResponse_QuestionVO_ OK
+ * @throws ApiError
+ */
+public static getNextQuestionUsingGet(
+  questionId?: number,
+): CancelablePromise<BaseResponse_long_> {
+    return __request(OpenAPI, {
+        method: 'GET',
+        url: '/api/question/get/questionId/next',
+        query: {
+            'questionId': questionId,
+        },
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },
+    });
+}
+/**
+ * getRandomQuestion
+ * @returns BaseResponse_QuestionVO_ OK
+ * @throws ApiError
+ */
+public static getRandomQuestion(
+): CancelablePromise<BaseResponse_long_> {
+    return __request(OpenAPI, {
+        method: 'GET',
+        url: '/api/question/get/questionId/random',
+        errors: {
+            401: `Unauthorized`,
+            403: `Forbidden`,
+            404: `Not Found`,
+        },
+    });
+}
 ```
 
-![image-20231225110615932](assets/image-20231225110615932.png)
+![image-20231229212847775](assets/image-20231229212847775.png)
 
-![image-20231225110624531](assets/image-20231225110624531.png)
+![image-20231229212904183](assets/image-20231229212904183.png)
 
-![image-20231225110635213](assets/image-20231225110635213.png)
+![image-20231229212920691](assets/image-20231229212920691.png)
 
-![image-20231225110648065](assets/image-20231225110648065.png)
+![image-20231229212932489](assets/image-20231229212932489.png)
+
+
 
 
 
